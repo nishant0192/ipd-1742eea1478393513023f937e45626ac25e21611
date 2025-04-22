@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/camera_fragment_coordinator"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Camera Preview -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/viewFinder"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Overlay for drawing landmarks -->
+    <com.google.mediapipe.examples.poselandmarker.OverlayView
+        android:id="@+id/overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+        
+    <!-- Exercise Stats Overlay -->
+    <include
+        android:id="@+id/exercise_stats_overlay"
+        layout="@layout/exercise_stats_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- FAB for workout statistics -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_workout_stats"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:contentDescription="Workout Statistics"
+        app:srcCompat="@drawable/ic_stats" />
+
+    <!-- Switch Camera Button -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/switchCamera"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        app:srcCompat="@drawable/ic_switch_camera"
+        android:contentDescription="@string/menu_switch_camera" />
+
+    <!-- Bottom Sheet for controls -->
+    <include
+        android:id="@+id/bottom_sheet_layout"
+        layout="@layout/info_bottom_sheet" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

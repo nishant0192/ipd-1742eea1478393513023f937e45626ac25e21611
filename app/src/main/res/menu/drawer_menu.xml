@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:title="Exercise Type">
+        <menu>
+            <item
+                android:id="@+id/menu_bicep"
+                android:icon="@drawable/ic_bicep"
+                android:title="Bicep Curl" />
+            <item
+                android:id="@+id/menu_squat"
+                android:icon="@drawable/ic_squat"
+                android:title="Squat" />
+            <item
+                android:id="@+id/menu_lateral_raise"
+                android:icon="@drawable/ic_lateral_raise"
+                android:title="Lateral Raise" />
+            <item
+                android:id="@+id/menu_lunges"
+                android:icon="@drawable/ic_lunges"
+                android:title="Lunges" />
+            <item
+                android:id="@+id/menu_shoulder_press"
+                android:icon="@drawable/ic_shoulder_press"
+                android:title="Shoulder Press" />
+        </menu>
+    </item>
+    
+    <item android:title="Statistics">
+        <menu>
+            <item
+                android:id="@+id/menu_stats"
+                android:icon="@drawable/ic_stats"
+                android:title="Workout Statistics" />
+        </menu>
+    </item>
+    
+    <item android:title="Camera Settings">
+        <menu>
+            <item
+                android:id="@+id/menu_toggle_camera"
+                android:icon="@drawable/ic_switch_camera"
+                android:title="Switch Camera" />
+        </menu>
+    </item>
+    
+    <item
+        android:id="@+id/menu_model_settings"
+        android:icon="@drawable/ic_settings"
+        android:title="Model Settings" />
+</menu>

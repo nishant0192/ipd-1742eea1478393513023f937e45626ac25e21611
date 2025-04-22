@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Model Selection -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Model Type"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp"/>
+        
+    <RadioGroup
+        android:id="@+id/radio_group_model"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+        
+        <RadioButton
+            android:id="@+id/radio_model_full"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pose Landmarker Full"/>
+            
+        <RadioButton
+            android:id="@+id/radio_model_lite"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pose Landmarker Lite"/>
+            
+        <RadioButton
+            android:id="@+id/radio_model_heavy"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pose Landmarker Heavy"/>
+    </RadioGroup>
+    
+    <!-- Delegate Selection -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hardware Delegate"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp"/>
+        
+    <RadioGroup
+        android:id="@+id/radio_group_delegate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+        
+        <RadioButton
+            android:id="@+id/radio_delegate_cpu"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CPU"/>
+            
+        <RadioButton
+            android:id="@+id/radio_delegate_gpu"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="GPU"/>
+    </RadioGroup>
+    
+    <!-- Detection Threshold -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Detection Confidence"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp"/>
+        
+    <SeekBar
+        android:id="@+id/seekbar_detection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"/>
+        
+    <TextView
+        android:id="@+id/text_detection_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0.5"
+        android:layout_gravity="end"/>
+        
+    <!-- Tracking Threshold -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Tracking Confidence"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp"/>
+        
+    <SeekBar
+        android:id="@+id/seekbar_tracking"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"/>
+        
+    <TextView
+        android:id="@+id/text_tracking_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0.5"
+        android:layout_gravity="end"/>
+        
+    <!-- Presence Threshold -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Presence Confidence"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp"/>
+        
+    <SeekBar
+        android:id="@+id/seekbar_presence"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"/>
+        
+    <TextView
+        android:id="@+id/text_presence_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0.5"
+        android:layout_gravity="end"/>
+</LinearLayout>
