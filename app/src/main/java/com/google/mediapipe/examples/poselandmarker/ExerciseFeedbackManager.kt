@@ -57,6 +57,10 @@ class ExerciseFeedbackManager(
     private var rightSideComplete = false
     private var lastSignificantAngleChange = 0L
     private val significantAngleChangeTimeoutMs = 1500 // 1.5 seconds to complete both sides
+    
+    // Time throttling for rep counting
+    private var lastRepTime = 0L
+    private val MIN_TIME_BETWEEN_REPS = 1500L // 1.5 seconds between reps
 
     // Handler for UI updates
     private val handler = Handler(Looper.getMainLooper())
@@ -132,6 +136,7 @@ class ExerciseFeedbackManager(
         leftSideComplete = false
         rightSideComplete = false
         angleHistory.clear()
+        lastRepTime = 0L
         updateUI()
     }
 
@@ -163,6 +168,29 @@ class ExerciseFeedbackManager(
         
         // Update UI
         updateUI()
+    }
+
+    /**
+     * Count a rep only if movement is detected and enough time has passed
+     */
+    private fun countRep() {
+        // Only count if we're moving and enough time has passed
+        val currentTime = System.currentTimeMillis()
+        if (!isMoving || currentTime - lastRepTime < MIN_TIME_BETWEEN_REPS) {
+            return
+        }
+        
+        repCount++
+        repJustCompleted = true
+        lastRepTime = currentTime
+        
+        // Check if this was a good rep (form errors)
+        if (formErrors.isEmpty()) {
+            consecutiveGoodReps++
+        } else {
+            consecutiveGoodReps = 0
+            showErrorFlash()
+        }
     }
 
     private fun processBicepCurl(result: PoseLandmarkerResult) {
@@ -586,19 +614,15 @@ class ExerciseFeedbackManager(
         val now = System.currentTimeMillis()
         val withinTimeWindow = (now - lastSignificantAngleChange) < significantAngleChangeTimeoutMs
         
+        // Check if we should count a rep - using the improved counting logic
         if (isMoving && leftSideComplete && rightSideComplete && withinTimeWindow) {
-            // Both sides completed within time window - count a rep!
+            // Both sides completed within time window
             if (repStage == RepStage.DOWN) {
-                repCount++
-                repJustCompleted = true
-                repStage = RepStage.UP
+                // Use the countRep method instead of directly incrementing
+                countRep()
                 
-                // Check if this was a good rep (no form errors)
-                if (formErrors.isEmpty()) {
-                    consecutiveGoodReps++
-                } else {
-                    consecutiveGoodReps = 0
-                    showErrorFlash()
+                if (repJustCompleted) {
+                    repStage = RepStage.UP
                 }
             } else if (repStage == RepStage.UP) {
                 // Reset for next rep
@@ -632,6 +656,12 @@ class ExerciseFeedbackManager(
             return
         }
         
+        // Check time between reps
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastRepTime < MIN_TIME_BETWEEN_REPS) {
+            return // Too soon for another rep
+        }
+        
         when (repStage) {
             RepStage.WAITING -> {
                 if (angle <= params.repStartThreshold) {
@@ -641,16 +671,11 @@ class ExerciseFeedbackManager(
             }
             RepStage.DOWN -> {
                 if (angle >= params.repCompletionThreshold) {
-                    repCount++
-                    repStage = RepStage.UP
-                    repJustCompleted = true
+                    // Use countRep instead of direct incrementing
+                    countRep()
                     
-                    // Check if this was a good rep (no form errors)
-                    if (formErrors.isEmpty()) {
-                        consecutiveGoodReps++
-                    } else {
-                        consecutiveGoodReps = 0
-                        showErrorFlash()
+                    if (repJustCompleted) {
+                        repStage = RepStage.UP
                     }
                 }
             }
@@ -680,7 +705,7 @@ class ExerciseFeedbackManager(
             val absoluteChange = abs(newest - oldest)
             
             // Check if the change is significant enough to be considered movement
-            if (absoluteChange > angleChangeThreshold) {
+            if (absoluteChange > angleChangeThreshold * 2) { // Increased threshold for robustness
                 isMoving = true
                 lastMovementTime = System.currentTimeMillis()
             } else {

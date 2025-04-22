@@ -4,4 +4,8 @@
     android:id="@+id/chart_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="8dp"/>
+    android:layout_marginStart="4dp"
+    android:layout_marginEnd="4dp"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:padding="8dp" />

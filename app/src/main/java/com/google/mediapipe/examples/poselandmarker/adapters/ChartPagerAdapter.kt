@@ -49,13 +49,16 @@ class ChartPagerAdapter(private val context: Context) :
         chartParent?.removeView(chartView)
         
         // Add chart to the container
+        holder.chartContainer.removeAllViews() // Clear any previous views
         holder.chartContainer.addView(chartView)
         
-        // Set layout parameters for chart
-        chartView.layoutParams = ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
+        // IMPORTANT: Use FrameLayout.LayoutParams instead of ViewGroup.LayoutParams
+        // to fix the ClassCastException
+        val layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
         )
+        chartView.layoutParams = layoutParams
     }
     
     override fun getItemCount(): Int = charts.size

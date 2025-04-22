@@ -4,9 +4,11 @@ import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RatingBar
 import android.widget.TextView
@@ -21,6 +23,7 @@ import com.google.mediapipe.examples.poselandmarker.R
 import com.google.mediapipe.examples.poselandmarker.ResultAnalysisActivity
 import com.google.mediapipe.examples.poselandmarker.recommend.RecommendationAdapter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import java.util.UUID
 
 /**
@@ -45,6 +48,11 @@ class WorkoutStatsManager(
     private var lastRepTime = 0L
     private val minTimeBetweenReps = 750L // Minimum 0.75 second between reps
     
+    // Flag to temporarily ignore reps during UI transitions
+    private var ignoreRepsTemporarily = false
+    private val ignoreRepsDuration = 2000L // 2 seconds
+    private var ignoreRepsUntil = 0L
+    
     // Dialog for displaying workout statistics
     private var statsDialog: Dialog? = null
     
@@ -57,8 +65,15 @@ class WorkoutStatsManager(
             return false // Workout not started, don't count rep
         }
         
-        // Check if sufficient time has passed since the last rep
+        // Check if we should ignore reps temporarily
         val currentTime = System.currentTimeMillis()
+        if (ignoreRepsTemporarily && currentTime < ignoreRepsUntil) {
+            return false // Temporarily ignoring reps
+        } else {
+            ignoreRepsTemporarily = false // Reset flag once duration expires
+        }
+        
+        // Check if sufficient time has passed since the last rep
         if (currentTime - lastRepTime < minTimeBetweenReps) {
             // Too soon after last rep, likely a false count
             return false 
@@ -67,20 +82,25 @@ class WorkoutStatsManager(
         // Update last rep time
         lastRepTime = currentTime
         
-        // Record rep in ViewModel
-        val errors = if (hasErrors) listOf("form_error") else emptyList()
-        viewModel.recordRep(angle, errors)
-        
-        // Update any currently open dialog
-        updateStatsDisplay()
-        
-        // Check if target reached
-        if (targetReps > 0 && (viewModel.totalReps.value ?: 0) >= targetReps) {
-            stopWorkout()
-            Toast.makeText(context, "Target reps reached! Great job!", Toast.LENGTH_SHORT).show()
+        try {
+            // Record rep in ViewModel
+            val errors = if (hasErrors) listOf("form_error") else emptyList()
+            viewModel.recordRep(angle, errors)
+            
+            // Update any currently open dialog
+            updateStatsDisplay()
+            
+            // Check if target reached
+            if (targetReps > 0 && (viewModel.totalReps.value ?: 0) >= targetReps) {
+                stopWorkout()
+                Toast.makeText(context, "Target reps reached! Great job!", Toast.LENGTH_SHORT).show()
+            }
+            
+            return true
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error recording rep: ${e.message}")
+            return false
         }
-        
-        return true
     }
     
     /**
@@ -91,7 +111,11 @@ class WorkoutStatsManager(
         
         isWorkoutActive = true
         viewModel.resetWorkoutStats()
-        lastRepTime = 0L
+        lastRepTime = System.currentTimeMillis() // Update this to current time
+        
+        // Temporarily ignore reps when starting workout to prevent auto counting
+        ignoreRepsTemporarily = true
+        ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
         
         // Update UI if dialog is showing
         statsDialog?.findViewById<TextView>(R.id.workout_status)?.text = "Workout in progress"
@@ -108,6 +132,10 @@ class WorkoutStatsManager(
         
         isWorkoutActive = false
         
+        // Temporarily ignore reps when stopping workout
+        ignoreRepsTemporarily = true
+        ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
+        
         // Update UI if dialog is showing
         statsDialog?.findViewById<TextView>(R.id.workout_status)?.text = "Workout completed"
         statsDialog?.findViewById<Button>(R.id.btn_start_workout)?.isEnabled = true
@@ -121,7 +149,7 @@ class WorkoutStatsManager(
             context.startActivity(intent)
         } catch (e: Exception) {
             // Log the error and show a toast - don't crash
-            android.util.Log.e("WorkoutStatsManager", "Error launching analysis: ${e.message}")
+            Log.e("WorkoutStatsManager", "Error launching analysis: ${e.message}")
             Toast.makeText(context, "Could not show analysis: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
@@ -167,120 +195,137 @@ class WorkoutStatsManager(
             return
         }
         
-        // Create new dialog
-        val builder = AlertDialog.Builder(context)
-        val dialogView = View.inflate(context, R.layout.workout_stats_dialog, null)
+        // Temporarily ignore reps when dialog opens to prevent auto counting
+        ignoreRepsTemporarily = true
+        ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
         
-        // Initialize UI elements
-        setupDialogControls(dialogView)
-        
-        // Create and show dialog
-        builder.setView(dialogView)
-            .setTitle("Workout Dashboard")
+        try {
+            // Create new dialog
+            val builder = AlertDialog.Builder(context)
+            val dialogView = View.inflate(context, R.layout.workout_stats_dialog, null)
             
-        val dialog = builder.create()
-        dialog.setOnDismissListener {
-            // Clean up any observers when dialog is dismissed
-            collectingJob?.cancel()
-            collectingJob = null
+            // Initialize UI elements
+            setupDialogControls(dialogView)
+            
+            // Create and show dialog
+            builder.setView(dialogView)
+                .setTitle("Workout Dashboard")
+                
+            val dialog = builder.create()
+            dialog.setOnDismissListener {
+                // Clean up any observers when dialog is dismissed
+                collectingJob?.cancel()
+                collectingJob = null
+                
+                // Temporarily ignore reps when dialog closes to prevent auto counting
+                ignoreRepsTemporarily = true
+                ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
+            }
+            
+            statsDialog = dialog
+            dialog.show()
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error showing workout stats dialog: ${e.message}")
+            Toast.makeText(context, "Failed to show workout statistics", Toast.LENGTH_SHORT).show()
         }
-        
-        statsDialog = dialog
-        dialog.show()
     }
     
     /**
      * Setup all the controls in the dialog
      */
     private fun setupDialogControls(dialogView: View) {
-        // Get references to UI elements
-        val exerciseTypeText = dialogView.findViewById<TextView>(R.id.value_exercise_type)
-        val totalRepsText = dialogView.findViewById<TextView>(R.id.value_total_reps)
-        val perfectRepsText = dialogView.findViewById<TextView>(R.id.value_perfect_reps)
-        val avgAngleText = dialogView.findViewById<TextView>(R.id.value_avg_angle)
-        val difficultyText = dialogView.findViewById<TextView>(R.id.value_difficulty)
-        val targetRepsInput = dialogView.findViewById<EditText>(R.id.edit_target_reps)
-        val setTargetButton = dialogView.findViewById<Button>(R.id.btn_set_target)
-        val startButton = dialogView.findViewById<Button>(R.id.btn_start_workout)
-        val stopButton = dialogView.findViewById<Button>(R.id.btn_stop_workout)
-        val statusText = dialogView.findViewById<TextView>(R.id.workout_status)
-        val recommendationsList = dialogView.findViewById<RecyclerView>(R.id.recommendation_list)
-        val ratingBar = dialogView.findViewById<RatingBar>(R.id.workout_rating)
-        val submitButton = dialogView.findViewById<Button>(R.id.btn_submit_rating)
-        
-        // Configure recommendations recycler view
-        recommendationsList.layoutManager = LinearLayoutManager(context)
-        
-        // Set initial values
-        exerciseTypeText.text = getExerciseTypeName(viewModel.currentExerciseType)
-        totalRepsText.text = viewModel.totalReps.value?.toString() ?: "0"
-        perfectRepsText.text = viewModel.perfectReps.value?.toString() ?: "0"
-        avgAngleText.text = viewModel.avgAngle.value?.let { String.format("%.1f°", it) } ?: "0°"
-        difficultyText.text = viewModel.difficulty.value?.toString() ?: "1"
-        statusText.text = if (isWorkoutActive) "Workout in progress" else "Ready to start"
-        
-        // Set initial button states
-        startButton.isEnabled = !isWorkoutActive
-        stopButton.isEnabled = isWorkoutActive
-        
-        // Setup observers for live data
-        viewModel.totalReps.observe(lifecycleOwner) { reps ->
-            totalRepsText.text = reps.toString()
-            updateProgressBar()
-        }
-        
-        viewModel.perfectReps.observe(lifecycleOwner) { reps ->
-            perfectRepsText.text = reps.toString()
-        }
-        
-        viewModel.avgAngle.observe(lifecycleOwner) { angle ->
-            avgAngleText.text = String.format("%.1f°", angle)
-        }
-        
-        viewModel.difficulty.observe(lifecycleOwner) { difficulty ->
-            difficultyText.text = difficulty.toString()
-        }
-        
-        // Load recommendations
-        updateRecommendations(recommendationsList)
-        
-        // Setup button listeners
-        setTargetButton.setOnClickListener {
-            val targetInput = targetRepsInput.text.toString()
-            if (targetInput.isNotEmpty()) {
-                val target = targetInput.toIntOrNull() ?: 0
-                if (target > 0) {
-                    setTargetReps(target)
-                    Toast.makeText(context, "Target set to $target reps", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Please enter a valid number", Toast.LENGTH_SHORT).show()
+        try {
+            // Get references to UI elements
+            val exerciseTypeText = dialogView.findViewById<TextView>(R.id.value_exercise_type)
+            val totalRepsText = dialogView.findViewById<TextView>(R.id.value_total_reps)
+            val perfectRepsText = dialogView.findViewById<TextView>(R.id.value_perfect_reps)
+            val avgAngleText = dialogView.findViewById<TextView>(R.id.value_avg_angle)
+            val difficultyText = dialogView.findViewById<TextView>(R.id.value_difficulty)
+            val targetRepsInput = dialogView.findViewById<EditText>(R.id.edit_target_reps)
+            val setTargetButton = dialogView.findViewById<Button>(R.id.btn_set_target)
+            val startButton = dialogView.findViewById<Button>(R.id.btn_start_workout)
+            val stopButton = dialogView.findViewById<Button>(R.id.btn_stop_workout)
+            val statusText = dialogView.findViewById<TextView>(R.id.workout_status)
+            val recommendationsList = dialogView.findViewById<RecyclerView>(R.id.recommendation_list)
+            val ratingBar = dialogView.findViewById<RatingBar>(R.id.workout_rating)
+            val submitButton = dialogView.findViewById<Button>(R.id.btn_submit_rating)
+            
+            // Configure recommendations recycler view
+            recommendationsList.layoutManager = LinearLayoutManager(context)
+            
+            // Set initial values
+            exerciseTypeText.text = getExerciseTypeName(viewModel.currentExerciseType)
+            totalRepsText.text = viewModel.totalReps.value?.toString() ?: "0"
+            perfectRepsText.text = viewModel.perfectReps.value?.toString() ?: "0"
+            avgAngleText.text = viewModel.avgAngle.value?.let { String.format("%.1f°", it) } ?: "0°"
+            difficultyText.text = viewModel.difficulty.value?.toString() ?: "1"
+            statusText.text = if (isWorkoutActive) "Workout in progress" else "Ready to start"
+            
+            // Set initial button states
+            startButton.isEnabled = !isWorkoutActive
+            stopButton.isEnabled = isWorkoutActive
+            
+            // Setup observers for live data
+            viewModel.totalReps.observe(lifecycleOwner) { reps ->
+                totalRepsText.text = reps.toString()
+                updateProgressBar()
+            }
+            
+            viewModel.perfectReps.observe(lifecycleOwner) { reps ->
+                perfectRepsText.text = reps.toString()
+            }
+            
+            viewModel.avgAngle.observe(lifecycleOwner) { angle ->
+                avgAngleText.text = String.format("%.1f°", angle)
+            }
+            
+            viewModel.difficulty.observe(lifecycleOwner) { difficulty ->
+                difficultyText.text = difficulty.toString()
+            }
+            
+            // Load recommendations
+            updateRecommendations(recommendationsList)
+            
+            // Setup button listeners
+            setTargetButton.setOnClickListener {
+                val targetInput = targetRepsInput.text.toString()
+                if (targetInput.isNotEmpty()) {
+                    val target = targetInput.toIntOrNull() ?: 0
+                    if (target > 0) {
+                        setTargetReps(target)
+                        Toast.makeText(context, "Target set to $target reps", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Please enter a valid number", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
-        }
-        
-        startButton.setOnClickListener {
-            startWorkout()
-        }
-        
-        stopButton.setOnClickListener {
-            // End the workout
-            stopWorkout()
-        }
-        
-        // Setup submit rating button
-        submitButton.setOnClickListener {
-            val rating = ratingBar.rating.toInt()
-            if (rating > 0) {
-                viewModel.submitRating(workoutId, rating)
-                ratingBar.rating = 0f
-                submitButton.text = "Thank you!"
-                submitButton.isEnabled = false
-                
-                // Reload recommendations after submitting rating
-                updateRecommendations(recommendationsList)
-            } else {
-                Toast.makeText(context, "Please select a rating", Toast.LENGTH_SHORT).show()
+            
+            startButton.setOnClickListener {
+                startWorkout()
             }
+            
+            stopButton.setOnClickListener {
+                // End the workout
+                stopWorkout()
+            }
+            
+            // Setup submit rating button
+            submitButton.setOnClickListener {
+                val rating = ratingBar.rating.toInt()
+                if (rating > 0) {
+                    viewModel.submitRating(workoutId, rating)
+                    ratingBar.rating = 0f
+                    submitButton.text = "Thank you!"
+                    submitButton.isEnabled = false
+                    
+                    // Reload recommendations after submitting rating
+                    updateRecommendations(recommendationsList)
+                } else {
+                    Toast.makeText(context, "Please select a rating", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error setting up dialog controls: ${e.message}")
         }
     }
     
@@ -291,33 +336,41 @@ class WorkoutStatsManager(
         val dialog = statsDialog ?: return
         if (!dialog.isShowing) return
         
-        // Update progress bar
-        updateProgressBar()
+        try {
+            // Update progress bar
+            updateProgressBar()
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error updating stats display: ${e.message}")
+        }
     }
     
     /**
      * Update the recommendations list
      */
     private fun updateRecommendations(recyclerView: RecyclerView) {
-        // Get recommendations from ViewModel
-        val recommendations = viewModel.recommendations.value
-        
-        // Create adapter with recommendations
-        val adapter = RecommendationAdapter(recommendations) { recommendationId ->
-            // Handle recommendation click
-            val adapter = recyclerView.adapter as? RecommendationAdapter ?: return@RecommendationAdapter
-            val exerciseType = adapter.getExerciseType(recommendationId)
+        try {
+            // Get recommendations from ViewModel
+            val recommendations = viewModel.recommendations.value
             
-            // Notify callback
-            onExerciseSelected(exerciseType)
+            // Create adapter with recommendations
+            val adapter = RecommendationAdapter(recommendations) { recommendationId ->
+                // Handle recommendation click
+                val adapter = recyclerView.adapter as? RecommendationAdapter ?: return@RecommendationAdapter
+                val exerciseType = adapter.getExerciseType(recommendationId)
+                
+                // Notify callback
+                onExerciseSelected(exerciseType)
+                
+                // Update exercise type display
+                statsDialog?.findViewById<TextView>(R.id.value_exercise_type)?.text = 
+                    getExerciseTypeName(exerciseType)
+            }
             
-            // Update exercise type display
-            statsDialog?.findViewById<TextView>(R.id.value_exercise_type)?.text = 
-                getExerciseTypeName(exerciseType)
+            // Set adapter
+            recyclerView.adapter = adapter
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error updating recommendations: ${e.message}")
         }
-        
-        // Set adapter
-        recyclerView.adapter = adapter
     }
     
     /**
