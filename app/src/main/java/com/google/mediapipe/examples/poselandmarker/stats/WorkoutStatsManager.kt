@@ -2,6 +2,7 @@ package com.google.mediapipe.examples.poselandmarker.stats
 
 import android.app.Dialog
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -17,12 +18,11 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.mediapipe.examples.poselandmarker.ExerciseType
 import com.google.mediapipe.examples.poselandmarker.MainViewModel
 import com.google.mediapipe.examples.poselandmarker.R
+import com.google.mediapipe.examples.poselandmarker.ResultAnalysisActivity
 import com.google.mediapipe.examples.poselandmarker.recommend.RecommendationAdapter
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
 import java.util.UUID
-import android.content.Intent
-import com.google.mediapipe.examples.poselandmarker.ResultAnalysisActivity
+
 /**
  * Enhanced workout statistics manager that integrates RL/RS models into the UI
  * and controls workout start/stop functionality
@@ -41,17 +41,31 @@ class WorkoutStatsManager(
     private var targetReps = 0
     private var collectingJob: Job? = null
     
+    // Rep tracking to avoid false counts
+    private var lastRepTime = 0L
+    private val minTimeBetweenReps = 750L // Minimum 0.75 second between reps
+    
     // Dialog for displaying workout statistics
     private var statsDialog: Dialog? = null
     
     /**
      * Record a completed rep with its form quality
-     * Only counts if workout is active
+     * Only counts if workout is active and sufficient time has passed since last rep
      */
     fun recordRep(angle: Float, hasErrors: Boolean): Boolean {
         if (!isWorkoutActive) {
             return false // Workout not started, don't count rep
         }
+        
+        // Check if sufficient time has passed since the last rep
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastRepTime < minTimeBetweenReps) {
+            // Too soon after last rep, likely a false count
+            return false 
+        }
+        
+        // Update last rep time
+        lastRepTime = currentTime
         
         // Record rep in ViewModel
         val errors = if (hasErrors) listOf("form_error") else emptyList()
@@ -77,6 +91,7 @@ class WorkoutStatsManager(
         
         isWorkoutActive = true
         viewModel.resetWorkoutStats()
+        lastRepTime = 0L
         
         // Update UI if dialog is showing
         statsDialog?.findViewById<TextView>(R.id.workout_status)?.text = "Workout in progress"
@@ -98,6 +113,17 @@ class WorkoutStatsManager(
         statsDialog?.findViewById<Button>(R.id.btn_start_workout)?.isEnabled = true
         statsDialog?.findViewById<Button>(R.id.btn_stop_workout)?.isEnabled = false
         statsDialog?.findViewById<View>(R.id.target_reps_layout)?.visibility = View.VISIBLE
+        
+        try {
+            // Launch the Result Analysis screen
+            val intent = Intent(context, ResultAnalysisActivity::class.java)
+            intent.putExtra("WORKOUT_ID", workoutId)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            // Log the error and show a toast - don't crash
+            android.util.Log.e("WorkoutStatsManager", "Error launching analysis: ${e.message}")
+            Toast.makeText(context, "Could not show analysis: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
     
     /**
@@ -237,16 +263,9 @@ class WorkoutStatsManager(
         }
         
         stopButton.setOnClickListener {
-            // first, end the workout as before
+            // End the workout
             stopWorkout()
-          
-            // then launch the Result Analysis screen
-            val intent = Intent(context, ResultAnalysisActivity::class.java)
-            intent.putExtra("WORKOUT_ID", workoutId)
-            // since context is actually your Activity, this will work:
-            context.startActivity(intent)
-          }
-          
+        }
         
         // Setup submit rating button
         submitButton.setOnClickListener {

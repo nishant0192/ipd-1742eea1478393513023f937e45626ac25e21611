@@ -23,18 +23,9 @@
     <!-- Declare permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <application
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:supportsRtl="true"
-        android:taskAffinity=""
-        android:theme="@style/AppTheme"
-        tools:ignore="AllowBackup">
+    <application android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:supportsRtl="true" android:taskAffinity="" android:theme="@style/AppTheme" tools:ignore="AllowBackup">
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -42,12 +33,9 @@
             </intent-filter>
 
             <!-- Declare notch support -->
-            <meta-data
-                android:name="android.notch_support"
-                android:value="true" />
+            <meta-data android:name="android.notch_support" android:value="true" />
         </activity>
-        <activity android:name=".ResultAnalysisActivity"
-      android:exported="false"/>
+        <activity android:name=".ResultAnalysisActivity" android:exported="false" android:label="Exercise Analysis" android:theme="@style/AppTheme"/>
     </application>
 
 </manifest>

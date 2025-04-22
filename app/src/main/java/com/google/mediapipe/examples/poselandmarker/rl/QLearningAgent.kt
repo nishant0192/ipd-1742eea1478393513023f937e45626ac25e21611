@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
+import com.google.gson.JsonParseException
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -23,15 +24,43 @@ class QLearningAgent(private val ctx: Context) {
   private var qTable: QTable = mutableMapOf()
   private val actions = listOf(-1, 0, +1)
 
-  init { load() }
-  private fun load() = runBlocking {
-    ctx.dataStore.data.first()[Q_KEY]?.let {
-      val type = object: TypeToken<QTable>(){}.type
-      qTable = gson.fromJson(it, type)
+  init { 
+    try {
+      load() 
+    } catch (e: Exception) {
+      // If loading fails, start with a fresh QTable
+      qTable = mutableMapOf()
+      // Save the fresh state to avoid future loading issues
+      save()
     }
   }
+  
+  private fun load() = runBlocking {
+    try {
+      ctx.dataStore.data.first()[Q_KEY]?.let {
+        val type = object: TypeToken<QTable>(){}.type
+        qTable = gson.fromJson(it, type)
+      }
+    } catch (e: JsonParseException) {
+      // If parsing fails, reset the QTable
+      qTable = mutableMapOf()
+      // And clear the stored data
+      ctx.dataStore.edit { prefs ->
+        prefs.remove(Q_KEY)
+      }
+    } catch (e: Exception) {
+      // Handle any other exceptions
+      qTable = mutableMapOf()
+    }
+  }
+  
   private fun save() = runBlocking {
-    ctx.dataStore.edit { it[Q_KEY] = gson.toJson(qTable) }
+    try {
+      ctx.dataStore.edit { it[Q_KEY] = gson.toJson(qTable) }
+    } catch (e: Exception) {
+      // If saving fails, just log and continue
+      android.util.Log.e("QLearningAgent", "Failed to save QTable: ${e.message}")
+    }
   }
 
   fun selectAction(state: State): Int {

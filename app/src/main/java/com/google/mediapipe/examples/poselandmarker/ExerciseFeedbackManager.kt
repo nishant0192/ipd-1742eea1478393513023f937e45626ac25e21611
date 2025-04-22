@@ -12,6 +12,7 @@ import kotlin.math.sqrt
 
 /**
  * Manages exercise feedback, form evaluation, and rep counting based on pose landmarks
+ * Improved with more robust rep counting logic
  */
 class ExerciseFeedbackManager(
     private val overlayView: OverlayView,
@@ -45,6 +46,17 @@ class ExerciseFeedbackManager(
 
     private var lastAngle: Float = 0f
     private var minMovementThreshold = 15f // Minimum angle change required to start counting
+    
+    // Movement detection
+    private var isMoving = false
+    private var lastMovementTime = 0L
+    private val movementTimeoutMs = 1000 // 1 second timeout for movement detection
+    
+    // Rep cycle tracking for bilateral exercises
+    private var leftSideComplete = false
+    private var rightSideComplete = false
+    private var lastSignificantAngleChange = 0L
+    private val significantAngleChangeTimeoutMs = 1500 // 1.5 seconds to complete both sides
 
     // Handler for UI updates
     private val handler = Handler(Looper.getMainLooper())
@@ -52,6 +64,10 @@ class ExerciseFeedbackManager(
     
     // Track if a rep was just completed
     private var repJustCompleted = false
+    
+    // Angle history for movement detection
+    private val angleHistory = ArrayDeque<Float>(5)
+    private val angleChangeThreshold = 5f // Minimum change to consider as movement
 
     // Exercise-specific parameters
     private val exerciseParams = mapOf(
@@ -111,6 +127,11 @@ class ExerciseFeedbackManager(
         repStage = RepStage.WAITING
         consecutiveGoodReps = 0
         formErrors.clear()
+        isMoving = false
+        lastMovementTime = 0L
+        leftSideComplete = false
+        rightSideComplete = false
+        angleHistory.clear()
         updateUI()
     }
 
@@ -148,59 +169,75 @@ class ExerciseFeedbackManager(
         val landmarks = result.landmarks()[0]
         if (landmarks.size <= 16) return
 
-        // Calculate the dominant arm angle (use right arm if both visible)
+        // Calculate both arm angles
         val leftShoulderVisible = isLandmarkConfident(landmarks[11])
         val rightShoulderVisible = isLandmarkConfident(landmarks[12])
         
+        var leftAngle = 0f
+        var rightAngle = 0f
         var dominantAngle = 0f
+        
+        if (leftShoulderVisible) {
+            val leftShoulder = landmarks[11]
+            val leftElbow = landmarks[13]
+            val leftWrist = landmarks[15]
+            
+            leftAngle = calculateAngle(leftShoulder, leftElbow, leftWrist)
+            // Check form errors for left arm
+            if (isLandmarkConfident(landmarks[23])) { // If left hip is visible
+                val leftHip = landmarks[23]
+                val shoulderHipElbowAngle = calculateAngle(leftShoulder, leftHip, leftElbow)
+                if (shoulderHipElbowAngle > 30f) {
+                    formErrors.add(FormError.ELBOW_AWAY_FROM_BODY)
+                }
+            }
+        }
         
         if (rightShoulderVisible) {
             val rightShoulder = landmarks[12]
             val rightElbow = landmarks[14]
             val rightWrist = landmarks[16]
             
-            val angle = calculateAngle(rightShoulder, rightElbow, rightWrist)
-            dominantAngle = angle
-            currentAngle = angle
-            
-            // Check form errors
-            formErrors.clear()
-            
-            // Error: Elbow moving away from body (check shoulder-hip-elbow alignment)
-            val rightHip = landmarks[24]
-            val shoulderHipElbowAngle = calculateAngle(rightShoulder, rightHip, rightElbow)
-            if (shoulderHipElbowAngle > 30f) {
-                formErrors.add(FormError.ELBOW_AWAY_FROM_BODY)
+            rightAngle = calculateAngle(rightShoulder, rightElbow, rightWrist)
+            // Check form errors for right arm
+            if (isLandmarkConfident(landmarks[24])) { // If right hip is visible
+                val rightHip = landmarks[24]
+                val shoulderHipElbowAngle = calculateAngle(rightShoulder, rightHip, rightElbow)
+                if (shoulderHipElbowAngle > 30f) {
+                    formErrors.add(FormError.ELBOW_AWAY_FROM_BODY)
+                }
             }
-            
-            // Error: Wrist rotation (pronation/supination issues)
-            // For this we'd need wrist rotation data which is complex with just landmarks
-            
-            // Process rep counting
-            processRep(dominantAngle)
-            
-        } else if (leftShoulderVisible) {
-            val leftShoulder = landmarks[11]
-            val leftElbow = landmarks[13]
-            val leftWrist = landmarks[15]
-            
-            val angle = calculateAngle(leftShoulder, leftElbow, leftWrist)
-            dominantAngle = angle
-            currentAngle = angle
-            
-            // Check form errors
-            formErrors.clear()
-            
-            // Error: Elbow moving away from body
-            val leftHip = landmarks[23]
-            val shoulderHipElbowAngle = calculateAngle(leftShoulder, leftHip, leftElbow)
-            if (shoulderHipElbowAngle > 30f) {
-                formErrors.add(FormError.ELBOW_AWAY_FROM_BODY)
-            }
-            
-            // Process rep counting
-            processRep(dominantAngle)
         }
+        
+        // Use the average angle if both arms are visible, otherwise use the visible one
+        dominantAngle = if (leftShoulderVisible && rightShoulderVisible) {
+            (leftAngle + rightAngle) / 2f
+        } else if (leftShoulderVisible) {
+            leftAngle
+        } else if (rightShoulderVisible) {
+            rightAngle
+        } else {
+            0f // No landmarks visible
+        }
+        
+        currentAngle = dominantAngle
+        
+        // Track left and right arm progress for complete rep
+        if (leftShoulderVisible) {
+            // Check if left arm completed its part of the rep
+            checkArmCompletion(leftAngle, isLeft = true)
+        }
+        
+        if (rightShoulderVisible) {
+            // Check if right arm completed its part of the rep
+            checkArmCompletion(rightAngle, isLeft = false)
+        }
+        
+        // Check if both arms have completed their parts to count as a full rep
+        checkBilateralRepCompletion()
+        
+        // Update movement detection
+        detectMovement(dominantAngle)
     }
 
     private fun processSquat(result: PoseLandmarkerResult) {
@@ -261,8 +298,12 @@ class ExerciseFeedbackManager(
             }
         }
         
+        // For squats, we'll track as a single movement (not bilateral)
         // Process rep counting
-        processRep(kneeAngle)
+        processSquatRep(kneeAngle)
+        
+        // Update movement detection
+        detectMovement(kneeAngle)
     }
 
     private fun processLateralRaise(result: PoseLandmarkerResult) {
@@ -313,8 +354,20 @@ class ExerciseFeedbackManager(
             }
         }
         
-        // Process rep counting
-        processRep(armAngle)
+        // Track left and right arm progress for complete rep
+        if (isLandmarkConfident(leftShoulder)) {
+            checkArmCompletion(leftArmAngle, isLeft = true)
+        }
+        
+        if (isLandmarkConfident(rightShoulder)) {
+            checkArmCompletion(rightArmAngle, isLeft = false)
+        }
+        
+        // Check if both arms have completed their parts to count as a full rep
+        checkBilateralRepCompletion()
+        
+        // Update movement detection
+        detectMovement(armAngle)
     }
 
     private fun processLunges(result: PoseLandmarkerResult) {
@@ -371,8 +424,15 @@ class ExerciseFeedbackManager(
             }
         }
         
-        // Process rep counting
-        processRep(kneeAngle)
+        // For lunges, track left and right leg separately
+        val isLeftLeg = leftAnkle.y < rightAnkle.y
+        checkLegCompletion(kneeAngle, isLeftLeg)
+        
+        // Check if both legs have completed their parts
+        checkBilateralRepCompletion()
+        
+        // Update movement detection
+        detectMovement(kneeAngle)
     }
 
     private fun processShoulderPress(result: PoseLandmarkerResult) {
@@ -431,53 +491,203 @@ class ExerciseFeedbackManager(
             }
         }
         
-        // Process rep counting - use the pressAngle that we calculated above
-        processRep(90f - pressAngle) // Convert to make the logic consistent with other exercises
+        // Track left and right arm progress for complete rep
+        if (leftPressAngle != null) {
+            // Convert to the format used by our rep counter (90f - pressAngle)
+            checkArmCompletion(90f - leftPressAngle, isLeft = true)
+        }
+        
+        if (rightPressAngle != null) {
+            // Convert to the format used by our rep counter (90f - pressAngle)
+            checkArmCompletion(90f - rightPressAngle, isLeft = false)
+        }
+        
+        // Check if both arms have completed their parts to count as a full rep
+        checkBilateralRepCompletion()
+        
+        // Update movement detection
+        detectMovement(90f - pressAngle) // Convert to make the logic consistent
     }
-
-    // Process rep counting
-    private fun processRep(angle: Float) {
-        // Get parameters for current exercise type
+    
+    /**
+     * Check if an arm has completed its part of a rep
+     */
+    private fun checkArmCompletion(angle: Float, isLeft: Boolean) {
+        val params = exerciseParams[exerciseType] ?: return
+        
+        if (isLeft) {
+            if (repStage == RepStage.WAITING || repStage == RepStage.UP) {
+                if (angle <= params.repStartThreshold) {
+                    // Arm has moved to the DOWN position
+                    leftSideComplete = true
+                    lastSignificantAngleChange = System.currentTimeMillis()
+                }
+            } else if (repStage == RepStage.DOWN) {
+                if (angle >= params.repCompletionThreshold) {
+                    // Arm has moved to the UP position
+                    leftSideComplete = true
+                    lastSignificantAngleChange = System.currentTimeMillis()
+                }
+            }
+        } else { // Right arm
+            if (repStage == RepStage.WAITING || repStage == RepStage.UP) {
+                if (angle <= params.repStartThreshold) {
+                    // Arm has moved to the DOWN position
+                    rightSideComplete = true
+                    lastSignificantAngleChange = System.currentTimeMillis()
+                }
+            } else if (repStage == RepStage.DOWN) {
+                if (angle >= params.repCompletionThreshold) {
+                    // Arm has moved to the UP position
+                    rightSideComplete = true
+                    lastSignificantAngleChange = System.currentTimeMillis()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Check if a leg has completed its part of a rep (for lunges)
+     */
+    private fun checkLegCompletion(angle: Float, isLeft: Boolean) {
+        val params = exerciseParams[exerciseType] ?: return
+        
+        if (repStage == RepStage.WAITING || repStage == RepStage.UP) {
+            if (angle <= params.repStartThreshold) {
+                // Leg has moved to the DOWN position
+                if (isLeft) {
+                    leftSideComplete = true
+                } else {
+                    rightSideComplete = true
+                }
+                lastSignificantAngleChange = System.currentTimeMillis()
+                repStage = RepStage.DOWN
+            }
+        } else if (repStage == RepStage.DOWN) {
+            if (angle >= params.repCompletionThreshold) {
+                // Leg has moved to the UP position
+                if (isLeft) {
+                    leftSideComplete = true
+                } else {
+                    rightSideComplete = true
+                }
+                lastSignificantAngleChange = System.currentTimeMillis()
+                repStage = RepStage.UP
+            }
+        }
+    }
+    
+    /**
+     * Check if both sides have completed to count a full rep
+     */
+    private fun checkBilateralRepCompletion() {
+        // Only count a rep if both sides have completed within the time window
+        // and the user is actively moving
+        val now = System.currentTimeMillis()
+        val withinTimeWindow = (now - lastSignificantAngleChange) < significantAngleChangeTimeoutMs
+        
+        if (isMoving && leftSideComplete && rightSideComplete && withinTimeWindow) {
+            // Both sides completed within time window - count a rep!
+            if (repStage == RepStage.DOWN) {
+                repCount++
+                repJustCompleted = true
+                repStage = RepStage.UP
+                
+                // Check if this was a good rep (no form errors)
+                if (formErrors.isEmpty()) {
+                    consecutiveGoodReps++
+                } else {
+                    consecutiveGoodReps = 0
+                    showErrorFlash()
+                }
+            } else if (repStage == RepStage.UP) {
+                // Reset for next rep
+                repStage = RepStage.DOWN
+            } else if (repStage == RepStage.WAITING) {
+                // First rep - set to DOWN to prepare for the next cycle
+                repStage = RepStage.DOWN
+            }
+            
+            // Reset completion flags
+            leftSideComplete = false
+            rightSideComplete = false
+        } else if (!withinTimeWindow) {
+            // If too much time passed, reset the completion flags
+            leftSideComplete = false
+            rightSideComplete = false
+        }
+    }
+    
+    /**
+     * Process rep counting specifically for squats (non-bilateral exercise)
+     */
+    private fun processSquatRep(angle: Float) {
         val params = exerciseParams[exerciseType] ?: return
         
         // Reset rep completed flag
         repJustCompleted = false
         
-        // Calculate change in angle since last measurement
-        val angleChange = abs(angle - lastAngle)
-        lastAngle = angle
+        // Only process rep if the user is moving
+        if (!isMoving) {
+            return
+        }
         
-        // Only process rep if there's significant movement or we're already in a rep
-        if (angleChange > minMovementThreshold || repStage != RepStage.WAITING) {
-            when (repStage) {
-                RepStage.WAITING -> {
-                    if (angle <= params.repStartThreshold) {
-                        repStage = RepStage.DOWN
-                        lastGoodFormTimestamp = System.currentTimeMillis()
+        when (repStage) {
+            RepStage.WAITING -> {
+                if (angle <= params.repStartThreshold) {
+                    repStage = RepStage.DOWN
+                    lastGoodFormTimestamp = System.currentTimeMillis()
+                }
+            }
+            RepStage.DOWN -> {
+                if (angle >= params.repCompletionThreshold) {
+                    repCount++
+                    repStage = RepStage.UP
+                    repJustCompleted = true
+                    
+                    // Check if this was a good rep (no form errors)
+                    if (formErrors.isEmpty()) {
+                        consecutiveGoodReps++
+                    } else {
+                        consecutiveGoodReps = 0
+                        showErrorFlash()
                     }
                 }
-                RepStage.DOWN -> {
-                    if (angle >= params.repCompletionThreshold) {
-                        repCount++
-                        repStage = RepStage.UP
-                        
-                        // Mark rep as just completed
-                        repJustCompleted = true
-                        
-                        // Check if this was a good rep (form errors)
-                        if (formErrors.isEmpty()) {
-                            consecutiveGoodReps++
-                        } else {
-                            consecutiveGoodReps = 0
-                            showErrorFlash()
-                        }
-                    }
+            }
+            RepStage.UP -> {
+                if (angle <= params.repStartThreshold) {
+                    repStage = RepStage.DOWN
+                    lastGoodFormTimestamp = System.currentTimeMillis()
                 }
-                RepStage.UP -> {
-                    if (angle <= params.repStartThreshold) {
-                        repStage = RepStage.DOWN
-                        lastGoodFormTimestamp = System.currentTimeMillis()
-                    }
+            }
+        }
+    }
+    
+    /**
+     * Detect if the user is actually moving by analyzing angle changes over time
+     */
+    private fun detectMovement(angle: Float) {
+        // Add current angle to history
+        angleHistory.add(angle)
+        if (angleHistory.size > 5) {
+            angleHistory.removeFirst()
+        }
+        
+        // Calculate if there's significant movement
+        if (angleHistory.size >= 3) {
+            val oldest = angleHistory.first()
+            val newest = angleHistory.last()
+            val absoluteChange = abs(newest - oldest)
+            
+            // Check if the change is significant enough to be considered movement
+            if (absoluteChange > angleChangeThreshold) {
+                isMoving = true
+                lastMovementTime = System.currentTimeMillis()
+            } else {
+                // If no significant movement in a while, consider as not moving
+                val now = System.currentTimeMillis()
+                if (now - lastMovementTime > movementTimeoutMs) {
+                    isMoving = false
                 }
             }
         }
