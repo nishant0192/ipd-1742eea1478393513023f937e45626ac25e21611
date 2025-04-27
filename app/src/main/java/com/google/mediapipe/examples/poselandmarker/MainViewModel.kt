@@ -18,7 +18,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import android.util.Log
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -72,11 +71,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     _model = m
     _settingsChanged.value = true
   }
-
-  // In MainViewModel.kt
-  fun setTotalReps(count: Int) {
-    _totalReps.value = count
-  }
   
   fun setDelegate(d: Int) {
     _delegate = d
@@ -107,6 +101,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     _settingsChanged.value = false
   }
 
+  /**
+   * Directly set total reps - used when syncing with ExerciseFeedbackManager
+   */
+  fun setTotalReps(count: Int) {
+    _totalReps.value = count
+  }
+
   companion object {
     private const val BATCH = 5
     private const val TARGET_ANGLE = 45
@@ -116,7 +117,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
    * On each rep: store sample then tune difficulty
    */
   fun recordRep(angle: Float, errors: List<String>) {
-    Log.d("RepCounter", "Recording rep with angle $angle")
     viewModelScope.launch {
       // Update local stats
       val currentTotal = _totalReps.value ?: 0
