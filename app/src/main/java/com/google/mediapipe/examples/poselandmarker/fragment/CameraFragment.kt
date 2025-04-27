@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -59,6 +60,26 @@ class CameraFragment : Fragment(), PoseLandmarkerHelper.LandmarkerListener {
 
     // Background executor for ML ops
     private lateinit var backgroundExecutor: ExecutorService
+    
+    /**
+     * Public getter for ExerciseFeedbackManager
+     * Used by WorkoutStatsManager to reset counters when starting a workout
+     */
+    fun getExerciseFeedbackManager(): ExerciseFeedbackManager? {
+        return if (::exerciseFeedbackManager.isInitialized) {
+            exerciseFeedbackManager
+        } else {
+            null
+        }
+    }
+
+    fun getRepCountTextView(): TextView? {
+        return if (_fragmentCameraBinding != null) {
+            _fragmentCameraBinding!!.exerciseStatsOverlay.tvRepCount
+        } else {
+            null
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -449,13 +470,16 @@ class CameraFragment : Fragment(), PoseLandmarkerHelper.LandmarkerListener {
                     proximityDistance
                 )
                 
-                // If a rep was completed, notify the ViewModel only if workout is active
-                if (exerciseFeedbackManager.wasRepJustCompleted()) {
+                // If a rep was completed and workout is active, update the rep count
+                if (exerciseFeedbackManager.wasRepJustCompleted() && statsManager?.isWorkoutActive() == true) {
                     val angle = exerciseFeedbackManager.getCurrentAngle()
                     val hasErrors = exerciseFeedbackManager.getFormErrors().isNotEmpty()
                     
-                    // Record the rep in the stats manager (which checks if workout is active)
-                    statsManager?.recordRep(angle, hasErrors)
+                    // Create a list of error strings
+                    val errorList = if (hasErrors) listOf("form_error") else emptyList()
+                    
+                    // Record the rep in the ViewModel
+                    viewModel.recordRep(angle, errorList)
                 }
             }
             

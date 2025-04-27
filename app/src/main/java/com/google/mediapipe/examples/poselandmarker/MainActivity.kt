@@ -17,6 +17,8 @@ import androidx.navigation.Navigation
 import androidx.navigation.fragment.NavHostFragment
 import com.google.mediapipe.examples.poselandmarker.databinding.ActivityMainBinding
 import com.google.mediapipe.examples.poselandmarker.stats.WorkoutStatsManager
+import com.google.mediapipe.examples.poselandmarker.fragment.CameraFragment
+import android.util.Log
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,6 +28,37 @@ class MainActivity : AppCompatActivity() {
     
     // Stats manager for workout tracking and recommendations
     private lateinit var statsManager: WorkoutStatsManager
+
+    fun getCameraFragment(): CameraFragment? {
+        try {
+            // Get the NavHostFragment
+            val navHostFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+            
+            // Find the CameraFragment in the child fragments
+            if (navHostFragment != null) {
+                val fragments = navHostFragment.childFragmentManager.fragments
+                for (fragment in fragments) {
+                    if (fragment is CameraFragment) {
+                        return fragment
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error getting CameraFragment: ${e.message}")
+        }
+        
+        return null
+    }
+
+    // In MainActivity.kt, add this method:
+    fun getExerciseOverlayText(): TextView? {
+        // Get the CameraFragment
+        val navHostFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+        val cameraFragment = navHostFragment?.childFragmentManager?.fragments?.firstOrNull() as? CameraFragment
+        
+        // Attempt to get the rep count TextView directly from the exercise overlay
+        return cameraFragment?.getRepCountTextView()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -62,6 +62,11 @@ class ExerciseFeedbackManager(
     private var lastRepTime = 0L
     private val MIN_TIME_BETWEEN_REPS = 1500L // 1.5 seconds between reps
 
+    // In ExerciseFeedbackManager.kt - wasRepJustCompleted method
+    private var lastReportedRepTime = 0L
+    private val MIN_REP_REPORT_INTERVAL = 2000L // 2 seconds
+
+
     // Handler for UI updates
     private val handler = Handler(Looper.getMainLooper())
     private var errorFlashRunnable: Runnable? = null
@@ -72,6 +77,16 @@ class ExerciseFeedbackManager(
     // Angle history for movement detection
     private val angleHistory = ArrayDeque<Float>(5)
     private val angleChangeThreshold = 5f // Minimum change to consider as movement
+
+    // In ExerciseFeedbackManager.kt - Add this getter method
+    fun getRepCountTextView(): TextView {
+        return repCountTextView
+    }
+
+    // In ExerciseFeedbackManager.kt
+    fun getCurrentRepCount(): Int {
+        return repCount
+    }
 
     // Exercise-specific parameters
     private val exerciseParams = mapOf(
@@ -126,17 +141,30 @@ class ExerciseFeedbackManager(
         updateExerciseSpecificTips()
     }
 
+    /**
+     * Reset all counters and state variables to prevent false rep counting
+     */
     fun resetCounters() {
         repCount = 0
         repStage = RepStage.WAITING
         consecutiveGoodReps = 0
         formErrors.clear()
+        lastAngle = 0f  // Reset the last angle to avoid false rep detection
+        repJustCompleted = false  // Ensure no rep is marked as completed on reset
+        
+        // Reset movement detection
         isMoving = false
         lastMovementTime = 0L
+        angleHistory.clear()
+        
+        // Reset bilateral exercise tracking
         leftSideComplete = false
         rightSideComplete = false
-        angleHistory.clear()
+        lastSignificantAngleChange = 0L
+        
+        // Reset time throttling
         lastRepTime = 0L
+        
         updateUI()
     }
 
@@ -777,7 +805,19 @@ class ExerciseFeedbackManager(
     /**
      * Returns true if a rep was just completed in the last processing cycle
      */
-    fun wasRepJustCompleted(): Boolean = repJustCompleted
+    fun wasRepJustCompleted(): Boolean {
+        val now = System.currentTimeMillis()
+        
+        // Only report a rep as completed if:
+        // 1. A rep was actually completed
+        // 2. Enough time has passed since last reported rep
+        if (repJustCompleted && now - lastReportedRepTime > MIN_REP_REPORT_INTERVAL) {
+            lastReportedRepTime = now
+            return true
+        }
+        
+        return false
+    }
     
     /**
      * Returns the current angle being tracked
