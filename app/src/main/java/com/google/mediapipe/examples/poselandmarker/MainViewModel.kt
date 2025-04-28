@@ -101,6 +101,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     _settingsChanged.value = false
   }
 
+  /**
+   * Directly set total reps - used when syncing with ExerciseFeedbackManager
+   */
+  fun setTotalReps(count: Int) {
+    _totalReps.value = count
+  }
+
   companion object {
     private const val BATCH = 5
     private const val TARGET_ANGLE = 45

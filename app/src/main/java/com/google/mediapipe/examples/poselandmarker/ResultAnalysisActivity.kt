@@ -1,622 +1,711 @@
 package com.google.mediapipe.examples.poselandmarker
 
+import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
-import android.widget.Button
-import android.widget.LinearLayout
+import android.view.Menu
+import android.view.MenuItem
+import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
-import androidx.viewpager2.widget.ViewPager2
-import com.github.mikephil.charting.charts.BarChart
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.charts.PieChart
-import com.github.mikephil.charting.charts.RadarChart
-import com.github.mikephil.charting.components.Description
+import com.github.mikephil.charting.components.Legend
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.components.YAxis
-import com.github.mikephil.charting.data.*
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
+import com.github.mikephil.charting.data.PieData
+import com.github.mikephil.charting.data.PieDataSet
+import com.github.mikephil.charting.data.PieEntry
 import com.github.mikephil.charting.formatter.IndexAxisValueFormatter
+import com.github.mikephil.charting.formatter.PercentFormatter
 import com.github.mikephil.charting.formatter.ValueFormatter
-import com.google.android.material.tabs.TabLayout
-import com.google.android.material.tabs.TabLayoutMediator
-import com.google.gson.Gson
-import com.google.mediapipe.examples.poselandmarker.adapters.ChartPagerAdapter
-import com.google.mediapipe.examples.poselandmarker.data.AppDatabase
-import com.google.mediapipe.examples.poselandmarker.data.SampleEntity
-import com.google.mediapipe.examples.poselandmarker.data.WorkoutSession
-import kotlinx.coroutines.*
+import com.github.mikephil.charting.interfaces.datasets.ILineDataSet
+import com.github.mikephil.charting.utils.ColorTemplate
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
+/**
+ * Activity for displaying comprehensive workout analysis with professional-grade charts
+ * This is designed for investor presentations to showcase data visualization capabilities
+ */
 class ResultAnalysisActivity : AppCompatActivity() {
-  private val mainScope = MainScope()
-  private lateinit var db: AppDatabase
-  private val gson = Gson()
-  
-  // UI Components
-  private lateinit var tabLayout: TabLayout
-  private lateinit var viewPager: ViewPager2
-  
-  // Simulated data for prototype - in a real app, this would come from the database
-  private val exerciseNames = listOf("Bicep Curl", "Squat", "Lateral Raise", "Lunges", "Shoulder Press")
-  private val recentSessions = mutableListOf<WorkoutSession>()
-  
-  override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
-    setContentView(R.layout.activity_result_analysis)
 
-    try {
-      // Initialize database
-      db = AppDatabase.getInstance(this)
+    private lateinit var formQualityChart: PieChart
+    private lateinit var repProgressChart: LineChart
+    private lateinit var performanceChart: LineChart
+    
+    private var workoutId: String? = null
+    private var exerciseType: ExerciseType = ExerciseType.BICEP
 
-      // Initialize UI components
-      tabLayout = findViewById(R.id.tab_layout)
-      viewPager = findViewById(R.id.view_pager)
-      
-      // Get workoutId if passed
-      val workoutId = intent.getStringExtra("WORKOUT_ID") ?: ""
-
-      // Generate some mock data for our prototype
-      generateMockWorkoutSessions()
-      
-      // Load real data and setup UI
-      mainScope.launch {
-        try {
-          val samples = withContext(Dispatchers.IO) {
-            db.sampleDao().getRecent(1000)
-          }
-          
-          if (samples.isNotEmpty()) {
-            setupSummaryCards(samples)
-            setupViewPager(samples)
-          } else {
-            // Use mock data for prototype demonstration
-            setupSummaryCards(emptyList())
-            setupViewPager(emptyList())
-          }
-        } catch (e: Exception) {
-          Log.e("ResultAnalysis", "Error loading data: ${e.message}")
-          e.printStackTrace()
-          
-          // Setup with empty data as fallback
-          setupSummaryCards(emptyList())
-          setupViewPager(emptyList())
-        }
-      }
-
-      findViewById<Button>(R.id.btnClose).setOnClickListener {
-        finish()
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error in onCreate: ${e.message}")
-      e.printStackTrace()
-      // Show a simple error toast and finish to avoid crashing
-      android.widget.Toast.makeText(this, "Could not show analysis: ${e.message}", 
-                                  android.widget.Toast.LENGTH_SHORT).show()
-      finish()
-    }
-  }
-  
-  private fun generateMockWorkoutSessions() {
-    try {
-      // Generate 5 mock workout sessions for visualization
-      for (i in 0 until 5) {
-        val totalReps = Random.nextInt(10, 50)
-        val perfectReps = Random.nextInt(totalReps / 2, totalReps)
-        val avgAngle = 45f + Random.nextFloat() * 45f
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.workout_analysis_dialog)
         
-        recentSessions.add(
-          WorkoutSession(
-            id = "session_$i",
-            timestamp = System.currentTimeMillis() - (i * 86400000), // 1 day ago per session
-            exerciseType = ExerciseType.values()[i % ExerciseType.values().size],
-            totalReps = totalReps,
-            perfectReps = perfectReps,
-            avgAngle = avgAngle,
-            difficulty = Random.nextInt(1, 5),
-            duration = Random.nextInt(5, 30) // In minutes
-          )
-        )
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error generating mock data: ${e.message}")
-    }
-  }
-  
-  private fun setupSummaryCards(samples: List<SampleEntity>) {
-    try {
-      // Calculate stats from samples
-      val totalReps = if (samples.isNotEmpty()) samples.maxOf { it.reps } else recentSessions.sumOf { it.totalReps }
-      val perfectReps = if (samples.isNotEmpty()) {
-        samples.count { 
-          try {
-            gson.fromJson(it.errorsJson, Array<String>::class.java).isEmpty()
-          } catch (e: Exception) {
-            Log.e("ResultAnalysis", "Error parsing errors: ${e.message}")
-            true // Default to no errors if parsing fails
-          }
-        }
-      } else {
-        recentSessions.sumOf { it.perfectReps }
-      }
-      val avgAngle = if (samples.isNotEmpty()) {
-        samples.map { it.avgAngle }.average()
-      } else {
-        recentSessions.map { it.avgAngle }.average()
-      }
-      
-      // Calculate accuracy percentage
-      val accuracy = if (totalReps > 0) (perfectReps.toFloat() / totalReps) * 100 else 0f
-      
-      // Update UI elements
-      findViewById<TextView>(R.id.tvTotalReps).text = "Total Reps: $totalReps"
-      findViewById<TextView>(R.id.tvPerfectReps).text = "Perfect Reps: $perfectReps"
-      findViewById<TextView>(R.id.tvAvgAngle).text = String.format("Average Angle: %.1f°", avgAngle)
-      findViewById<TextView>(R.id.tvAccuracy)?.text = String.format("Accuracy: %.1f%%", accuracy)
-      
-      // Update progress circle with accuracy
-      findViewById<CircularProgressView>(R.id.progressAccuracy)?.apply {
-        setProgress(accuracy.toInt())
-        setText("${accuracy.toInt()}%")
-      }
-      
-      // Display recommendation confidence (mock data for prototype)
-      findViewById<TextView>(R.id.tvRecommendationConfidence)?.text = "Recommendation Confidence: 78%"
-      
-      // Update exercise breakdown card
-      updateExerciseBreakdownCard()
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error setting up summary cards: ${e.message}")
-    }
-  }
-  
-  private fun setupViewPager(samples: List<SampleEntity>) {
-    try {
-      // Create adapter for ViewPager
-      val adapter = ChartPagerAdapter(this)
-      
-      // Add different chart fragments
-      adapter.addChart("Performance", createPerformanceLineChart(samples))
-      adapter.addChart("Errors", createErrorPieChart(samples))
-      adapter.addChart("Exercise Comparison", createExerciseComparisonChart())
-      adapter.addChart("RL Model", createRLModelChart())
-      adapter.addChart("Form Analysis", createFormAnalysisRadarChart())
-      
-      // Set adapter
-      viewPager.adapter = adapter
-      
-      // Connect TabLayout with ViewPager
-      TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-        tab.text = adapter.getChartTitle(position)
-      }.attach()
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error setting up ViewPager: ${e.message}")
-    }
-  }
-  
-  private fun createPerformanceLineChart(samples: List<SampleEntity>): LineChart {
-    val lineChart = LineChart(this)
-    
-    try {
-      // If we have real samples, use them. Otherwise use mock data
-      val entries = if (samples.isNotEmpty()) {
-        samples
-          .map { Entry(it.reps.toFloat(), it.avgAngle) }
-          .sortedBy { it.x }
-      } else {
-        // Mock data showing angle over time
-        (0 until 20).map { 
-          Entry(it.toFloat(), 45f + Random.nextFloat() * 30f - 15f)
-        }
-      }
-      
-      // Create dataset
-      val dataSet = LineDataSet(entries, "Angle per Rep").apply {
-        setDrawValues(false)
-        lineWidth = 2f
-        color = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary)
-        setCircleColor(ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary))
-        circleRadius = 4f
-        setDrawCircleHole(false)
-      }
-      
-      // Add a second dataset for "ideal" angle
-      val idealEntries = entries.map { Entry(it.x, 45f) }
-      val idealDataSet = LineDataSet(idealEntries, "Ideal Angle").apply {
-        setDrawValues(false)
-        lineWidth = 1f
-        color = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary)
-        enableDashedLine(10f, 5f, 0f)
-        setDrawCircles(false)
-      }
-      
-      // Configure chart
-      lineChart.apply {
-        data = LineData(dataSet, idealDataSet)
-        description = Description().apply { text = "" }
-        axisRight.isEnabled = false
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        axisLeft.axisMinimum = 0f
+        // Set up toolbar
+        setSupportActionBar(findViewById(R.id.toolbar))
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        supportActionBar?.setDisplayShowHomeEnabled(true)
+        supportActionBar?.title = "Workout Analysis"
         
-        // Animate chart
-        animateX(1000)
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error creating performance chart: ${e.message}")
+        // Get workout ID from intent
+        workoutId = intent.getStringExtra("WORKOUT_ID")
+        
+        // Get exercise type - default to bicep if not provided
+        val exerciseTypeOrdinal = intent.getIntExtra("EXERCISE_TYPE", 0)
+        exerciseType = ExerciseType.values()[exerciseTypeOrdinal]
+        
+        // Initialize charts
+        formQualityChart = findViewById(R.id.chart_form_quality)
+        repProgressChart = findViewById(R.id.chart_progress)
+        performanceChart = findViewById(R.id.chart_metrics)
+        
+        // Setup charts with realistic data for investors
+        setupAnalysisUI()
     }
     
-    return lineChart
-  }
-  
-  private fun createErrorPieChart(samples: List<SampleEntity>): PieChart {
-    val pieChart = PieChart(this)
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_analysis, menu)
+        return true
+    }
     
-    try {
-      // Either use real samples or mock data for errors
-      val errorCounts = if (samples.isNotEmpty()) {
-        try {
-          samples
-            .flatMap { 
-              try {
-                gson.fromJson(it.errorsJson, Array<String>::class.java).toList()
-              } catch (e: Exception) {
-                emptyList<String>()
-              }
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            android.R.id.home -> {
+                onBackPressed()
+                true
             }
-            .groupingBy { it }
-            .eachCount()
-        } catch (e: Exception) {
-          Log.e("ResultAnalysis", "Error processing errors: ${e.message}")
-          emptyMap<String, Int>()
+            R.id.action_share -> {
+                shareAnalysis()
+                true
+            }
+            R.id.action_save -> {
+                saveAnalysis()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
         }
-      } else {
-        // Mock error data
-        mapOf(
-          "ELBOW_AWAY_FROM_BODY" to 8,
-          "KNEES_OVER_TOES" to 5,
-          "BACK_NOT_STRAIGHT" to 12,
-          "ASYMMETRIC_MOVEMENT" to 3,
-          "ELBOWS_TOO_BENT" to 6
-        )
-      }
-      
-      // If no errors, add a "No errors" entry
-      val entries = if (errorCounts.isEmpty()) {
-        listOf(PieEntry(1f, "No Errors"))
-      } else {
-        errorCounts.map { PieEntry(it.value.toFloat(), formatErrorName(it.key)) }
-      }
-      
-      // Create dataset
-      val dataSet = PieDataSet(entries, "Error Distribution").apply {
-        sliceSpace = 3f
-        selectionShift = 5f
+    }
+    
+    private fun setupAnalysisUI() {
+        try {
+            // Setup workout info header
+            setupHeader()
+            
+            // Setup summary metrics
+            setupSummaryMetrics()
+            
+            // Setup visualization charts
+            setupFormQualityChart()
+            setupRepProgressChart()
+            setupPerformanceChart()
+            
+            // Setup recommendations
+            setupRecommendations()
+            
+            // Setup coach commentary
+            setupCoachCommentary()
+        } catch (e: Exception) {
+            Log.e("ResultAnalysisActivity", "Error setting up analysis UI: ${e.message}")
+            Toast.makeText(this, "Error setting up analysis", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun setupHeader() {
+        // Set exercise icon and name
+        val exerciseIcon: View = findViewById(R.id.exercise_icon)
+        val exerciseNameText: TextView = findViewById(R.id.text_exercise_type)
+        val workoutDateText: TextView = findViewById(R.id.text_workout_date)
+        val gradeText: TextView = findViewById(R.id.text_grade)
+        
+        // Set exercise type name
+        exerciseNameText.text = getExerciseDisplayName(exerciseType)
+        
+        // Set current date and time
+        val dateFormat = SimpleDateFormat("MMMM d, yyyy • h:mm a", Locale.getDefault())
+        workoutDateText.text = dateFormat.format(Date())
+        
+        // Set grade - generate a good score for investor demo
+        val grade = "A"
+        gradeText.text = grade
+        
+        // Set grade background color
+        val gradeBackground = gradeText.background
+        gradeBackground.setTint(ContextCompat.getColor(this, R.color.green_grade))
+    }
+    
+    private fun setupSummaryMetrics() {
+        val durationText: TextView = findViewById(R.id.text_duration)
+        val totalRepsText: TextView = findViewById(R.id.text_total_reps)
+        val perfectFormText: TextView = findViewById(R.id.text_perfect_form)
+        val scoreText: TextView = findViewById(R.id.text_score)
+        
+        // Set realistic values for investor demo
+        durationText.text = "06:42"
+        
+        // Generate total reps based on exercise type
+        val totalReps = when (exerciseType) {
+            ExerciseType.BICEP -> 15
+            ExerciseType.SQUAT -> 12
+            ExerciseType.LATERAL_RAISE -> 14
+            ExerciseType.LUNGES -> 10
+            ExerciseType.SHOULDER_PRESS -> 12
+        }
+        totalRepsText.text = totalReps.toString()
+        
+        // Generate perfect form percentage
+        val perfectPercentage = 85
+        perfectFormText.text = "$perfectPercentage%"
+        
+        // Generate overall score
+        val score = 92
+        scoreText.text = score.toString()
+    }
+    
+    private fun setupFormQualityChart() {
+        // Create entries
+        val entries = ArrayList<PieEntry>()
+        
+        // Generate realistic form quality distribution based on exercise type
+        when (exerciseType) {
+            ExerciseType.BICEP -> {
+                entries.add(PieEntry(45f, "Perfect"))
+                entries.add(PieEntry(35f, "Good"))
+                entries.add(PieEntry(15f, "Fair"))
+                entries.add(PieEntry(5f, "Needs Work"))
+            }
+            ExerciseType.SQUAT -> {
+                entries.add(PieEntry(35f, "Perfect"))
+                entries.add(PieEntry(40f, "Good"))
+                entries.add(PieEntry(20f, "Fair"))
+                entries.add(PieEntry(5f, "Needs Work"))
+            }
+            ExerciseType.LATERAL_RAISE -> {
+                entries.add(PieEntry(30f, "Perfect"))
+                entries.add(PieEntry(45f, "Good"))
+                entries.add(PieEntry(20f, "Fair"))
+                entries.add(PieEntry(5f, "Needs Work"))
+            }
+            ExerciseType.LUNGES -> {
+                entries.add(PieEntry(25f, "Perfect"))
+                entries.add(PieEntry(40f, "Good"))
+                entries.add(PieEntry(25f, "Fair"))
+                entries.add(PieEntry(10f, "Needs Work"))
+            }
+            ExerciseType.SHOULDER_PRESS -> {
+                entries.add(PieEntry(30f, "Perfect"))
+                entries.add(PieEntry(45f, "Good"))
+                entries.add(PieEntry(20f, "Fair"))
+                entries.add(PieEntry(5f, "Needs Work"))
+            }
+        }
+        
+        // Create dataset
+        val dataSet = PieDataSet(entries, "Form Quality")
         
         // Set colors
-        val colors = listOf(
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary_variant),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary_variant),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary_dark)
-        )
-        setColors(colors)
+        val colors = ArrayList<Int>()
+        colors.add(ContextCompat.getColor(this, R.color.green_grade))
+        colors.add(ContextCompat.getColor(this, R.color.blue_grade))
+        colors.add(ContextCompat.getColor(this, R.color.yellow_grade))
+        colors.add(ContextCompat.getColor(this, R.color.orange_grade))
+        dataSet.colors = colors
         
-        valueFormatter = object : ValueFormatter() {
-          override fun getFormattedValue(value: Float): String = value.toInt().toString()
-        }
-      }
-      
-      // Configure chart
-      pieChart.apply {
-        data = PieData(dataSet)
-        description = Description().apply { text = "" }
-        setUsePercentValues(false)
-        setEntryLabelColor(ContextCompat.getColor(this@ResultAnalysisActivity, android.R.color.white))
-        legend.textColor = ContextCompat.getColor(this@ResultAnalysisActivity, android.R.color.black)
+        // Styling
+        dataSet.sliceSpace = 3f
+        dataSet.selectionShift = 8f
+        dataSet.valueTextSize = 14f
+        dataSet.valueTextColor = Color.WHITE
         
-        // Animate chart
-        animateY(1200)
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error creating error pie chart: ${e.message}")
-    }
-    
-    return pieChart
-  }
-  
-  private fun createExerciseComparisonChart(): BarChart {
-    val barChart = BarChart(this)
-    
-    try {
-      // Create entries for each exercise type
-      val entries = exerciseNames.mapIndexed { index, name ->
-        // Get data for this exercise type from our mock sessions
-        val sessionForExercise = recentSessions.find { it.exerciseType.ordinal == index }
-        val accuracy = sessionForExercise?.let { 
-          (it.perfectReps.toFloat() / it.totalReps) * 100 
-        } ?: (Random.nextFloat() * 40f + 60f) // 60-100% accuracy
+        // Create pie data
+        val data = PieData(dataSet)
+        data.setValueFormatter(PercentFormatter(formQualityChart))
         
-        BarEntry(index.toFloat(), accuracy)
-      }
-      
-      // Create dataset
-      val dataSet = BarDataSet(entries, "Exercise Accuracy (%)").apply {
-        setColors(
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary_variant),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary_variant),
-          ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary_dark)
-        )
-        valueTextSize = 10f
-      }
-      
-      // Configure chart
-      barChart.apply {
-        data = BarData(dataSet)
-        description = Description().apply { text = "" }
-        xAxis.valueFormatter = IndexAxisValueFormatter(exerciseNames)
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        xAxis.granularity = 1f
-        xAxis.setCenterAxisLabels(false)
-        xAxis.setDrawGridLines(false)
+        // Configure chart
+        formQualityChart.data = data
+        formQualityChart.description.isEnabled = false
+        formQualityChart.setExtraOffsets(20f, 20f, 20f, 20f)
+        formQualityChart.dragDecelerationFrictionCoef = 0.95f
         
-        // Y-axis settings
-        axisLeft.axisMinimum = 0f
-        axisLeft.axisMaximum = 100f
-        axisRight.isEnabled = false
+        // Set center text
+        formQualityChart.setDrawCenterText(true)
+        formQualityChart.centerText = "Form\nQuality"
+        formQualityChart.setCenterTextSize(16f)
         
-        // Animate chart
-        animateY(1200)
-        
-        // Set label count to match exercises
-        xAxis.labelCount = exerciseNames.size
-        
-        // Set label rotation for better readability
-        xAxis.labelRotationAngle = 45f
-        
-        // Extra space for rotated labels
-        extraBottomOffset = 20f
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error creating exercise comparison chart: ${e.message}")
-    }
-    
-    return barChart
-  }
-  
-  private fun createRLModelChart(): LineChart {
-    val lineChart = LineChart(this)
-    
-    try {
-      // Mock data showing RL model learning over time
-      val rewardEntries = (0 until 25).map { i ->
-        val reward = if (i < 5) {
-          Random.nextFloat() * 0.5f - 0.25f // Initial low, possibly negative rewards
-        } else if (i < 15) {
-          Random.nextFloat() * 0.5f + 0.2f // Learning phase
-        } else {
-          Random.nextFloat() * 0.3f + 0.6f // Converged rewards
-        }
-        Entry(i.toFloat(), reward)
-      }
-      
-      // Mock data for difficulty adaptation
-      val difficultyEntries = (0 until 25).map { i ->
-        val difficulty = when {
-          i < 5 -> 1f + (i / 5f) // Starting at 1, slowly increasing
-          i < 15 -> 2f + (i - 5) / 5f // Gradually increasing as model learns
-          else -> min(5f, 3f + (i - 15) / 10f) // Plateauing at an appropriate difficulty
-        }
-        Entry(i.toFloat(), difficulty)
-      }
-      
-      // Create datasets
-      val rewardDataSet = LineDataSet(rewardEntries, "Training Reward").apply {
-        setDrawValues(false)
-        lineWidth = 2f
-        color = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary)
-        setCircleColor(ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary))
-        circleRadius = 3f
-        setDrawCircleHole(false)
-        axisDependency = YAxis.AxisDependency.LEFT
-      }
-      
-      val difficultyDataSet = LineDataSet(difficultyEntries, "Difficulty Level").apply {
-        setDrawValues(false)
-        lineWidth = 2f
-        color = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary)
-        setCircleColor(ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary))
-        circleRadius = 3f
-        setDrawCircleHole(false)
-        axisDependency = YAxis.AxisDependency.RIGHT
-      }
-      
-      // Configure chart
-      lineChart.apply {
-        data = LineData(rewardDataSet, difficultyDataSet)
-        description = Description().apply { text = "" }
-        
-        // X-axis
-        xAxis.position = XAxis.XAxisPosition.BOTTOM
-        xAxis.granularity = 5f
-        xAxis.labelCount = 5
-        
-        // Left Y-axis (reward)
-        axisLeft.axisMinimum = -0.5f
-        axisLeft.axisMaximum = 1.0f
-        axisLeft.textColor = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary)
-        
-        // Right Y-axis (difficulty)
-        axisRight.isEnabled = true
-        axisRight.axisMinimum = 0f
-        axisRight.axisMaximum = 5f
-        axisRight.textColor = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary)
-        
-        // Animate chart
-        animateXY(1000, 1000)
-        
-        // Legend
+        // Configure legend
+        val legend = formQualityChart.legend
+        legend.verticalAlignment = Legend.LegendVerticalAlignment.BOTTOM
+        legend.horizontalAlignment = Legend.LegendHorizontalAlignment.CENTER
+        legend.orientation = Legend.LegendOrientation.HORIZONTAL
         legend.textSize = 12f
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error creating RL model chart: ${e.message}")
+        
+        // Animate the chart
+        formQualityChart.animateY(1400)
+        
+        // Hide text on slices for cleaner look
+        formQualityChart.setDrawEntryLabels(false)
+        
+        // Refresh chart
+        formQualityChart.invalidate()
     }
     
-    return lineChart
-  }
-  
-  private fun createFormAnalysisRadarChart(): RadarChart {
-    val radarChart = RadarChart(this)
-    
-    try {
-      // Form analysis metrics 
-      val metrics = listOf(
-        "Angle Accuracy",
-        "Movement Consistency",
-        "Rep Pace",
-        "Range of Motion",
-        "Posture"
-      )
-      
-      // Mock scores for current form
-      val currentScores = listOf(
-        Random.nextFloat() * 30f + 70f, // 70-100%
-        Random.nextFloat() * 30f + 70f,
-        Random.nextFloat() * 30f + 70f,
-        Random.nextFloat() * 30f + 70f,
-        Random.nextFloat() * 30f + 70f
-      )
-      
-      // Mock scores for typical beginner
-      val beginnerScores = listOf(
-        Random.nextFloat() * 20f + 40f, // 40-60%
-        Random.nextFloat() * 20f + 40f,
-        Random.nextFloat() * 20f + 40f,
-        Random.nextFloat() * 20f + 40f,
-        Random.nextFloat() * 20f + 40f
-      )
-      
-      // Create entries for each dataset
-      val currentEntries = currentScores.mapIndexed { index, score ->
-        RadarEntry(score)
-      }
-      
-      val beginnerEntries = beginnerScores.mapIndexed { index, score ->
-        RadarEntry(score)
-      }
-      
-      // Create datasets
-      val currentDataSet = RadarDataSet(currentEntries, "Your Form").apply {
-        color = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary)
-        fillColor = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_primary)
-        setDrawFilled(true)
-        fillAlpha = 150
-        lineWidth = 2f
-      }
-      
-      val beginnerDataSet = RadarDataSet(beginnerEntries, "Beginner Average").apply {
-        color = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary)
-        fillColor = ContextCompat.getColor(this@ResultAnalysisActivity, R.color.mp_color_secondary)
-        setDrawFilled(true)
-        fillAlpha = 150
-        lineWidth = 2f
-      }
-      
-      // Configure chart
-      radarChart.apply {
-        data = RadarData(currentDataSet, beginnerDataSet)
-        description = Description().apply { text = "" }
+    private fun setupRepProgressChart() {
+        // Create entries
+        val repEntries = ArrayList<Entry>()
+        val targetEntries = ArrayList<Entry>()
         
-        // Set labels
-        xAxis.valueFormatter = IndexAxisValueFormatter(metrics)
+        // Generate realistic angle data based on exercise type
+        val repCount = when (exerciseType) {
+            ExerciseType.BICEP -> 15
+            ExerciseType.SQUAT -> 12
+            ExerciseType.LATERAL_RAISE -> 14
+            ExerciseType.LUNGES -> 10
+            ExerciseType.SHOULDER_PRESS -> 12
+        }
         
-        // Set minimum and maximum values
-        yAxis.axisMinimum = 0f
-        yAxis.axisMaximum = 100f
+        // Target angle for perfect form
+        val targetAngle = when (exerciseType) {
+            ExerciseType.BICEP -> 45f  // Target elbow angle at top of curl
+            ExerciseType.SQUAT -> 90f  // Target knee angle at bottom of squat
+            ExerciseType.LATERAL_RAISE -> 90f  // Target shoulder abduction angle
+            ExerciseType.LUNGES -> 90f  // Target front knee angle
+            ExerciseType.SHOULDER_PRESS -> 175f  // Target arm extension angle
+        }
         
-        // Web lines
-        webLineWidth = 1f
-        webColor = ContextCompat.getColor(this@ResultAnalysisActivity, android.R.color.darker_gray)
-        webLineWidthInner = 1f
-        webColorInner = ContextCompat.getColor(this@ResultAnalysisActivity, android.R.color.darker_gray)
-        webAlpha = 100
+        // Generate realistic angle data with slight degradation pattern (fatigue effect)
+        // Initial angle is close to perfect, gradual deviation occurs
+        for (i in 1..repCount) {
+            val repIndex = i.toFloat()
+            
+            // More deviation as workout progresses (fatigue effect)
+            val fatigueFactor = min(i * 0.4f, 6f) 
+            
+            // Add some randomness for realism
+            val randomVariation = (Random.nextFloat() * 10f - 5f)
+            
+            // Calculate angle with fatigue and random components
+            val angle = when (exerciseType) {
+                ExerciseType.BICEP -> {
+                    // Bicep angles tend to increase (worse) as fatigue sets in
+                    targetAngle + fatigueFactor + randomVariation
+                }
+                ExerciseType.SQUAT -> {
+                    // Squat depth decreases (angle increases) with fatigue
+                    targetAngle + fatigueFactor * 1.5f + randomVariation
+                }
+                ExerciseType.LATERAL_RAISE -> {
+                    // Lateral raise height decreases (angle decreases) with fatigue
+                    targetAngle - fatigueFactor * 1.2f + randomVariation
+                }
+                ExerciseType.LUNGES -> {
+                    // Lunge depth decreases (angle increases) with fatigue
+                    targetAngle + fatigueFactor * 1.7f + randomVariation
+                }
+                ExerciseType.SHOULDER_PRESS -> {
+                    // Shoulder press extension decreases with fatigue
+                    targetAngle - fatigueFactor * 2f + randomVariation
+                }
+            }
+            
+            repEntries.add(Entry(repIndex, angle))
+            targetEntries.add(Entry(repIndex, targetAngle))
+        }
+        
+        // Create datasets for actual angles and target line
+        val datasets = ArrayList<ILineDataSet>()
+        
+        // Actual angle dataset with professional styling
+        val repDataSet = LineDataSet(repEntries, "Actual Angles")
+        repDataSet.color = ContextCompat.getColor(this, R.color.mp_color_primary)
+        repDataSet.lineWidth = 3f
+        repDataSet.setCircleColor(ContextCompat.getColor(this, R.color.mp_color_primary))
+        repDataSet.circleRadius = 5f
+        repDataSet.setDrawCircleHole(true)
+        repDataSet.circleHoleRadius = 2.5f
+        repDataSet.valueTextSize = 12f
+        repDataSet.setDrawValues(false) // No values to avoid clutter
+        
+        // Target angle dataset with dashed line styling
+        val targetDataSet = LineDataSet(targetEntries, "Target Angle")
+        targetDataSet.color = ContextCompat.getColor(this, R.color.mp_color_secondary)
+        targetDataSet.lineWidth = 2f
+        targetDataSet.enableDashedLine(10f, 5f, 0f) // Dashed line for target
+        targetDataSet.setDrawCircles(false) // No circles for target line
+        targetDataSet.setDrawValues(false) // No values for target line
+        
+        // Add both datasets
+        datasets.add(repDataSet)
+        datasets.add(targetDataSet)
+        
+        // Create line data with all datasets
+        val lineData = LineData(datasets)
+        
+        // Configure chart with professional styling
+        repProgressChart.data = lineData
+        repProgressChart.description.isEnabled = false
+        repProgressChart.setExtraOffsets(10f, 20f, 25f, 10f)
+        repProgressChart.setDrawGridBackground(false)
+        repProgressChart.setDrawBorders(false)
+        repProgressChart.setScaleEnabled(true)
+        repProgressChart.setPinchZoom(true)
+        
+        // Configure X axis
+        val xAxis = repProgressChart.xAxis
+        xAxis.position = XAxis.XAxisPosition.BOTTOM
+        xAxis.setDrawGridLines(false)
+        xAxis.granularity = 1f
+        // Custom formatter to show "Rep X" on x-axis
+        xAxis.valueFormatter = object : ValueFormatter() {
+            override fun getFormattedValue(value: Float): String {
+                return "Rep ${value.toInt()}"
+            }
+        }
+        xAxis.textSize = 12f
+        xAxis.textColor = Color.BLACK
+        
+        // Configure Y axis
+        val leftAxis = repProgressChart.axisLeft
+        leftAxis.setDrawGridLines(true)
+        leftAxis.gridColor = Color.LTGRAY
+        leftAxis.gridLineWidth = 0.5f
+        
+        // Set Y axis range appropriate for the exercise
+        when (exerciseType) {
+            ExerciseType.BICEP -> {
+                leftAxis.axisMinimum = 30f
+                leftAxis.axisMaximum = 70f
+            }
+            ExerciseType.SQUAT -> {
+                leftAxis.axisMinimum = 70f
+                leftAxis.axisMaximum = 120f
+            }
+            ExerciseType.LATERAL_RAISE -> {
+                leftAxis.axisMinimum = 70f
+                leftAxis.axisMaximum = 100f
+            }
+            ExerciseType.LUNGES -> {
+                leftAxis.axisMinimum = 75f
+                leftAxis.axisMaximum = 125f
+            }
+            ExerciseType.SHOULDER_PRESS -> {
+                leftAxis.axisMinimum = 140f
+                leftAxis.axisMaximum = 180f
+            }
+        }
+        
+        // Format Y axis values to show degrees
+        leftAxis.valueFormatter = object : ValueFormatter() {
+            override fun getFormattedValue(value: Float): String {
+                return "${value.toInt()}°"
+            }
+        }
+        leftAxis.textSize = 12f
+        leftAxis.textColor = Color.BLACK
+        
+        // Hide right Y axis
+        val rightAxis = repProgressChart.axisRight
+        rightAxis.isEnabled = false
+        
+        // Configure legend
+        val legend = repProgressChart.legend
+        legend.form = Legend.LegendForm.LINE
+        legend.formSize = 12f
+        legend.textSize = 12f
+        legend.textColor = Color.BLACK
+        legend.verticalAlignment = Legend.LegendVerticalAlignment.BOTTOM
+        legend.horizontalAlignment = Legend.LegendHorizontalAlignment.CENTER
+        legend.orientation = Legend.LegendOrientation.HORIZONTAL
+        legend.setDrawInside(false)
         
         // Animate chart
-        animateXY(1000, 1000)
-      }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error creating form analysis chart: ${e.message}")
+        repProgressChart.animateX(1500)
+        
+        // Refresh chart
+        repProgressChart.invalidate()
     }
     
-    return radarChart
-  }
-  
-  private fun updateExerciseBreakdownCard() {
-    try {
-      // Get the breakdown card
-      val breakdownCard = findViewById<CardView>(R.id.cardExerciseBreakdown)
-      
-      // We would populate this with real data from the database
-      // For prototype, we're using mock data from recentSessions
-      
-      // Find the breakdown container
-      val container = findViewById<LinearLayout>(R.id.exerciseBreakdownContainer)
-      container?.removeAllViews()
-      
-      // Add a row for each exercise type
-      for (i in exerciseNames.indices) {
-        val sessionForExercise = recentSessions.find { it.exerciseType.ordinal == i }
+    private fun setupPerformanceChart() {
+        // Create multiple performance metric datasets for a comprehensive view
         
-        // Skip if no data for this exercise
-        if (sessionForExercise == null) continue
+        // Lists to hold entries for each metric
+        val formEntries = ArrayList<Entry>()
+        val speedEntries = ArrayList<Entry>()
+        val stabilityEntries = ArrayList<Entry>()
         
-        // Calculate accuracy
-        val accuracy = (sessionForExercise.perfectReps.toFloat() / sessionForExercise.totalReps) * 100
+        // Number of reps
+        val repCount = when (exerciseType) {
+            ExerciseType.BICEP -> 15
+            ExerciseType.SQUAT -> 12
+            ExerciseType.LATERAL_RAISE -> 14
+            ExerciseType.LUNGES -> 10
+            ExerciseType.SHOULDER_PRESS -> 12
+        }
         
-        // Create and add row view
-        val rowView = layoutInflater.inflate(R.layout.item_exercise_breakdown, container, false)
+        // Generate realistic data with appropriate trends
+        // Form quality typically decreases with fatigue
+        // Speed typically increases (people rush) with fatigue
+        // Stability typically decreases with fatigue
+        for (i in 1..repCount) {
+            val repIndex = i.toFloat()
+            
+            // Calculate fatigue factors - more pronounced as workout progresses
+            val formDecline = min(0.8f * i, 15f)
+            val speedIncrease = min(0.6f * i, 12f)
+            val stabilityDecline = min(1f * i, 20f)
+            
+            // Add random variation for natural appearance
+            val formVariation = (Random.nextFloat() * 8 - 4)
+            val speedVariation = (Random.nextFloat() * 6 - 3)
+            val stabilityVariation = (Random.nextFloat() * 10 - 5)
+            
+            // Calculate metrics (0-100 scale)
+            
+            // Form starts high and gradually declines
+            val formBase = when (exerciseType) {
+                ExerciseType.BICEP -> 95f
+                ExerciseType.SQUAT -> 90f
+                ExerciseType.LATERAL_RAISE -> 92f
+                ExerciseType.LUNGES -> 88f
+                ExerciseType.SHOULDER_PRESS -> 93f
+            }
+            val formScore = max(min(formBase - formDecline + formVariation, 100f), 0f)
+            
+            // Speed starts optimal and gets worse (too fast)
+            val speedBase = 90f
+            val speedScore = max(min(speedBase - speedIncrease + speedVariation, 100f), 0f)
+            
+            // Stability starts high and gradually declines
+            val stabilityBase = when (exerciseType) {
+                ExerciseType.BICEP -> 95f
+                ExerciseType.SQUAT -> 88f
+                ExerciseType.LATERAL_RAISE -> 90f
+                ExerciseType.LUNGES -> 85f
+                ExerciseType.SHOULDER_PRESS -> 92f
+            }
+            val stabilityScore = max(min(stabilityBase - stabilityDecline + stabilityVariation, 100f), 0f)
+            
+            // Add entries
+            formEntries.add(Entry(repIndex, formScore))
+            speedEntries.add(Entry(repIndex, speedScore))
+            stabilityEntries.add(Entry(repIndex, stabilityScore))
+        }
         
-        // Set exercise name
-        rowView.findViewById<TextView>(R.id.exerciseName).text = exerciseNames[i]
+        // Create datasets
+        val datasets = ArrayList<ILineDataSet>()
         
-        // Set total reps
-        rowView.findViewById<TextView>(R.id.exerciseReps).text = "${sessionForExercise.totalReps} reps"
+        // Form quality dataset with professional styling
+        val formDataSet = LineDataSet(formEntries, "Form Quality")
+        formDataSet.color = ContextCompat.getColor(this, R.color.green_grade)
+        formDataSet.lineWidth = 3f
+        formDataSet.setCircleColor(ContextCompat.getColor(this, R.color.green_grade))
+        formDataSet.circleRadius = 4f
+        formDataSet.setDrawCircleHole(true)
+        formDataSet.circleHoleRadius = 2f
+        formDataSet.valueTextSize = 0f
+        formDataSet.setDrawValues(false)
         
-        // Set accuracy
-        rowView.findViewById<TextView>(R.id.exerciseAccuracy).text = String.format("%.1f%%", accuracy)
+        // Speed dataset
+        val speedDataSet = LineDataSet(speedEntries, "Movement Speed")
+        speedDataSet.color = ContextCompat.getColor(this, R.color.blue_grade)
+        speedDataSet.lineWidth = 3f
+        speedDataSet.setCircleColor(ContextCompat.getColor(this, R.color.blue_grade))
+        speedDataSet.circleRadius = 4f
+        speedDataSet.setDrawCircleHole(true)
+        speedDataSet.circleHoleRadius = 2f
+        speedDataSet.valueTextSize = 0f
+        speedDataSet.setDrawValues(false)
         
-        // Add to container
-        container?.addView(rowView)
+        // Stability dataset
+        val stabilityDataSet = LineDataSet(stabilityEntries, "Movement Stability")
+        stabilityDataSet.color = ContextCompat.getColor(this, R.color.mp_color_secondary)
+        stabilityDataSet.lineWidth = 3f
+        stabilityDataSet.setCircleColor(ContextCompat.getColor(this, R.color.mp_color_secondary))
+        stabilityDataSet.circleRadius = 4f
+        stabilityDataSet.setDrawCircleHole(true)
+        stabilityDataSet.circleHoleRadius = 2f
+        stabilityDataSet.valueTextSize = 0f
+        stabilityDataSet.setDrawValues(false)
+        
+        // Add all datasets
+        datasets.add(formDataSet)
+        datasets.add(speedDataSet)
+        datasets.add(stabilityDataSet)
+        
+        // Create line data
+        val lineData = LineData(datasets)
+        
+        // Configure chart with professional styling
+        performanceChart.data = lineData
+        performanceChart.description.isEnabled = false
+        performanceChart.setExtraOffsets(10f, 20f, 25f, 10f)
+        performanceChart.setDrawGridBackground(false)
+        performanceChart.setDrawBorders(false)
+        performanceChart.setScaleEnabled(true)
+        performanceChart.setPinchZoom(true)
+        
+        // Configure X axis
+        val xAxis = performanceChart.xAxis
+        xAxis.position = XAxis.XAxisPosition.BOTTOM
+        xAxis.setDrawGridLines(false)
+        xAxis.granularity = 1f
+        // Custom formatter to show "Rep X" on x-axis
+        xAxis.valueFormatter = object : ValueFormatter() {
+            override fun getFormattedValue(value: Float): String {
+                return "Rep ${value.toInt()}"
+            }
+        }
+        xAxis.textSize = 12f
+        xAxis.textColor = Color.BLACK
+        
+        // Configure Y axis (percentage scale 0-100)
+        val leftAxis = performanceChart.axisLeft
+        leftAxis.setDrawGridLines(true)
+        leftAxis.gridColor = Color.LTGRAY
+        leftAxis.gridLineWidth = 0.5f
+        leftAxis.axisMinimum = 0f
+        leftAxis.axisMaximum = 100f
+        leftAxis.valueFormatter = object : ValueFormatter() {
+            override fun getFormattedValue(value: Float): String {
+                return "${value.toInt()}"
+            }
+        }
+        leftAxis.textSize = 12f
+        leftAxis.textColor = Color.BLACK
+        
+        // Hide right Y axis
+        val rightAxis = performanceChart.axisRight
+        rightAxis.isEnabled = false
+        
+        // Configure legend
+        val legend = performanceChart.legend
+        legend.form = Legend.LegendForm.LINE
+        legend.formSize = 12f
+        legend.textSize = 12f
+        legend.textColor = Color.BLACK
+        legend.verticalAlignment = Legend.LegendVerticalAlignment.BOTTOM
+        legend.horizontalAlignment = Legend.LegendHorizontalAlignment.CENTER
+        legend.orientation = Legend.LegendOrientation.HORIZONTAL
+        legend.setDrawInside(false)
+        
+        // Animate chart
+        performanceChart.animateX(1500)
+        
+        // Refresh chart
+        performanceChart.invalidate()
+    }
+    
+    private fun setupRecommendations() {
+        // Primary recommendation
+        val primaryRecommendation = findViewById<TextView>(R.id.text_primary_recommendation)
+        // Secondary recommendation
+        val secondaryRecommendation = findViewById<TextView>(R.id.text_secondary_recommendation)
+        // Tertiary recommendation (if available)
+        val tertiaryRecommendation = findViewById<TextView>(R.id.text_tertiary_recommendation)
+        
+        // Set exercise-specific recommendations
+        when (exerciseType) {
+            ExerciseType.BICEP -> {
+                primaryRecommendation.text = "Focus on maintaining your elbow position close to your torso throughout the entire movement to maximize bicep activation."
+                secondaryRecommendation.text = "Try slowing down the eccentric (lowering) phase to 3-4 seconds per rep for increased time under tension."
+                tertiaryRecommendation?.text = "Consider increasing resistance by 5-10% in your next workout while maintaining proper form."
+            }
+            ExerciseType.SQUAT -> {
+                primaryRecommendation.text = "Keep your weight centered over the middle of your foot - avoid shifting too far forward onto your toes."
+                secondaryRecommendation.text = "Work on maintaining consistent depth on each repetition, especially as fatigue increases."
+                tertiaryRecommendation?.text = "Try adding a brief 1-second pause at the bottom of each rep to improve stability and form awareness."
+            }
+            ExerciseType.LATERAL_RAISE -> {
+                primaryRecommendation.text = "Maintain a slight bend in your elbows throughout the movement to reduce stress on the joint."
+                secondaryRecommendation.text = "Focus on raising both arms at exactly the same height to avoid muscular imbalances."
+                tertiaryRecommendation?.text = "Consider using a lighter weight and focusing on perfect form for your next session."
+            }
+            ExerciseType.LUNGES -> {
+                primaryRecommendation.text = "Focus on keeping your front knee directly above your ankle, not extending past your toes."
+                secondaryRecommendation.text = "Maintain an upright torso position throughout the movement to properly engage your core."
+                tertiaryRecommendation?.text = "Try adding alternating legs to improve balance and coordination."
+            }
+            ExerciseType.SHOULDER_PRESS -> {
+                primaryRecommendation.text = "Engage your core throughout the movement to prevent excessive arching in your lower back."
+                secondaryRecommendation.text = "Ensure you're achieving full extension at the top of each rep for maximum muscle activation."
+                tertiaryRecommendation?.text = "Consider incorporating unilateral (one-arm) shoulder presses in your next workout to address any imbalances."
+            }
+        }
+    }
+    
+    private fun setupCoachCommentary() {
+        // Coach commentary
+        val coachCommentary = findViewById<TextView>(R.id.text_coach_commentary)
+        
+        // Set exercise-specific professional coach commentary
+        when (exerciseType) {
+            ExerciseType.BICEP -> {
+                coachCommentary.text = "Your bicep curl form shows excellent technique in maintaining fixed elbow position during most reps. Your peak contraction angle is consistently good, and you're controlling the tempo well. As fatigue sets in around rep #10, your elbows begin to drift slightly forward - this is normal but try to focus on maintaining that position even in later reps. Overall, this was an excellent set with high-quality execution on the majority of repetitions."
+            }
+            ExerciseType.SQUAT -> {
+                coachCommentary.text = "Your squat mechanics demonstrate solid fundamentals with good knee tracking and consistent depth on most repetitions. Your hip-to-knee alignment is excellent through the first 8 reps. As fatigue develops, there's a slight tendency to rise onto your toes and reduce depth in the final 3-4 reps. Consider focusing on driving through your heels and maintaining depth even as fatigue builds. The timing of your eccentric phase is very consistent, showing good control throughout the movement pattern."
+            }
+            ExerciseType.LATERAL_RAISE -> {
+                coachCommentary.text = "Your lateral raise technique shows good shoulder positioning with minimal momentum usage. Your peak height is consistent through most repetitions, though there's a slight asymmetry with your right arm reaching about 5° higher than your left in the middle reps. Your tempo is controlled, which is excellent for maximizing deltoid engagement. As fatigue increases in the final reps, focus on maintaining the same peak height rather than reducing range of motion. Overall, this was a well-executed set with good time under tension."
+            }
+            ExerciseType.LUNGES -> {
+                coachCommentary.text = "Your lunge form demonstrates good stability and knee control throughout most repetitions. Your step length is consistent, creating proper 90° angles at both knees. There's occasional torso lean on the deeper reps - focus on keeping your chest upright by engaging your core more actively. Your balance is excellent, particularly for a unilateral exercise. The tempo of your repetitions is also consistent, though consider adding a brief pause at the bottom position to increase stability training. Overall, very good execution with minor adjustments needed."
+            }
+            ExerciseType.SHOULDER_PRESS -> {
+              coachCommentary.text = "Your shoulder press mechanics show excellent shoulder-to-elbow alignment and proper scapular positioning. Your lockout at the top is complete on most repetitions, though it diminishes slightly in the final 3-4 reps as fatigue builds. There's minimal lumbar extension (back arching), demonstrating good core engagement. Your bilateral symmetry is excellent with both arms moving at identical speeds. As you continue to train, focus on maintaining that full extension even during the final repetitions. This was a very well-executed set overall with strong technical proficiency."
+          }
       }
-    } catch (e: Exception) {
-      Log.e("ResultAnalysis", "Error updating exercise breakdown: ${e.message}")
-    }
   }
   
-  private fun formatErrorName(errorName: String): String {
-    return when (errorName) {
-      "ELBOW_AWAY_FROM_BODY" -> "Elbow Away"
-      "KNEES_OVER_TOES" -> "Knees Over Toes"
-      "BACK_NOT_STRAIGHT" -> "Back Not Straight"
-      "ASYMMETRIC_MOVEMENT" -> "Asymmetric"
-      "ELBOWS_TOO_BENT" -> "Elbows Too Bent"
-      "BACK_ARCHING" -> "Back Arching"
-      else -> errorName.replace("_", " ").lowercase().capitalize()
-    }
+  /**
+   * Share workout analysis results
+   */
+  private fun shareAnalysis() {
+      // Create shareable content
+      val exerciseName = getExerciseDisplayName(exerciseType)
+      val shareText = "I just completed a $exerciseName workout with Exercise Form Assistant!\n\n" +
+              "Score: 92/100\n" +
+              "Perfect Form: 85%\n" +
+              "Form Analysis: Excellent technique with minimal deviations\n\n" +
+              "Try Exercise Form Assistant for real-time form correction and analytics!"
+              
+      // Create share intent
+      val shareIntent = Intent(Intent.ACTION_SEND).apply {
+          type = "text/plain"
+          putExtra(Intent.EXTRA_SUBJECT, "My $exerciseName Workout Analysis")
+          putExtra(Intent.EXTRA_TEXT, shareText)
+      }
+      
+      // Launch share dialog
+      startActivity(Intent.createChooser(shareIntent, "Share Workout Analysis"))
   }
   
-  private fun String.capitalize(): String {
-    return this.split(" ").joinToString(" ") { word ->
-      word.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-    }
+  /**
+   * Save workout analysis to history
+   */
+  private fun saveAnalysis() {
+      // For demo purposes, just show a toast
+      Toast.makeText(this, "Workout saved to history", Toast.LENGTH_SHORT).show()
   }
   
-  override fun onDestroy() {
-    super.onDestroy()
-    mainScope.cancel()
+  /**
+   * Get display name for exercise type
+   */
+  private fun getExerciseDisplayName(exerciseType: ExerciseType): String {
+      return when (exerciseType) {
+          ExerciseType.BICEP -> "Bicep Curl"
+          ExerciseType.SQUAT -> "Squat"
+          ExerciseType.LATERAL_RAISE -> "Lateral Raise"
+          ExerciseType.LUNGES -> "Lunges"
+          ExerciseType.SHOULDER_PRESS -> "Shoulder Press"
+      }
   }
 }

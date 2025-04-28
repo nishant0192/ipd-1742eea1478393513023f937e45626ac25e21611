@@ -16,7 +16,9 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.navigation.Navigation
 import androidx.navigation.fragment.NavHostFragment
 import com.google.mediapipe.examples.poselandmarker.databinding.ActivityMainBinding
+import com.google.mediapipe.examples.poselandmarker.fragment.CameraFragment
 import com.google.mediapipe.examples.poselandmarker.stats.WorkoutStatsManager
+import com.google.mediapipe.examples.poselandmarker.R
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,6 +28,9 @@ class MainActivity : AppCompatActivity() {
     
     // Stats manager for workout tracking and recommendations
     private lateinit var statsManager: WorkoutStatsManager
+    
+    // Reference to the current camera fragment
+    private var cameraFragment: CameraFragment? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -155,6 +160,19 @@ class MainActivity : AppCompatActivity() {
     fun getWorkoutStatsManager(): WorkoutStatsManager {
         return statsManager
     }
+
+    /**
+     * Get the current camera fragment
+     * Used by WorkoutStatsManager to access exercise feedback manager
+     */
+    fun getCameraFragment(): CameraFragment? {
+        if (cameraFragment == null) {
+            // Try to find the camera fragment
+            val navHostFragment = supportFragmentManager.findFragmentById(R.id.fragment_container) as? NavHostFragment
+            cameraFragment = navHostFragment?.childFragmentManager?.fragments?.firstOrNull() as? CameraFragment
+        }
+        return cameraFragment
+    }
     
     private fun showModelSettingsDialog() {
         val builder = AlertDialog.Builder(this)
@@ -277,4 +295,4 @@ class MainActivity : AppCompatActivity() {
             statsManager.cleanup()
         }
     }
-}
+  }

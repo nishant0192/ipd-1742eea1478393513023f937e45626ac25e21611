@@ -4,11 +4,12 @@ import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
-import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RatingBar
 import android.widget.TextView
@@ -18,12 +19,12 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.mediapipe.examples.poselandmarker.ExerciseType
+import com.google.mediapipe.examples.poselandmarker.MainActivity
 import com.google.mediapipe.examples.poselandmarker.MainViewModel
 import com.google.mediapipe.examples.poselandmarker.R
 import com.google.mediapipe.examples.poselandmarker.ResultAnalysisActivity
 import com.google.mediapipe.examples.poselandmarker.recommend.RecommendationAdapter
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
 import java.util.UUID
 
 /**
@@ -43,64 +44,87 @@ class WorkoutStatsManager(
     private var isWorkoutActive = false
     private var targetReps = 0
     private var collectingJob: Job? = null
-    
-    // Rep tracking to avoid false counts
-    private var lastRepTime = 0L
-    private val minTimeBetweenReps = 750L // Minimum 0.75 second between reps
-    
-    // Flag to temporarily ignore reps during UI transitions
-    private var ignoreRepsTemporarily = false
-    private val ignoreRepsDuration = 2000L // 2 seconds
-    private var ignoreRepsUntil = 0L
+    private var workoutStartTime = 0L
     
     // Dialog for displaying workout statistics
     private var statsDialog: Dialog? = null
+
+    private var uiUpdateHandler: Handler? = null
+    
+    // Handler for syncing rep count
+    private var syncHandler: Handler? = null
+    private val syncRunnable = object : Runnable {
+        override fun run() {
+            if (isWorkoutActive) {
+                updateFromExerciseFeedbackManager()
+                syncHandler?.postDelayed(this, 500) // Update every 500ms
+            }
+        }
+    }
+    
+    /**
+     * Directly update the rep counts from ExerciseFeedbackManager
+     */
+    private fun updateFromExerciseFeedbackManager() {
+        try {
+            val mainActivity = context as? MainActivity
+            if (mainActivity != null) {
+                val cameraFragment = mainActivity.getCameraFragment()
+                val feedbackManager = cameraFragment?.getExerciseFeedbackManager()
+                
+                if (feedbackManager != null) {
+                    // Get the EXACT rep count from ExerciseFeedbackManager
+                    val actualRepCount = feedbackManager.getCurrentRepCount()
+                    
+                    // Force the ViewModel to match this value
+                    viewModel.setTotalReps(actualRepCount)
+                    
+                    // Directly update the UI
+                    statsDialog?.findViewById<TextView>(R.id.value_total_reps)?.text = actualRepCount.toString()
+                    
+                    // Update progress bar
+                    val progressBar = statsDialog?.findViewById<ProgressBar>(R.id.rep_progress)
+                    if (progressBar != null && targetReps > 0) {
+                        val progress = (actualRepCount * 100) / targetReps
+                        progressBar.max = 100
+                        progressBar.progress = progress.coerceAtMost(100)
+                    }
+                    
+                    // Check if target reached
+                    if (targetReps > 0 && actualRepCount >= targetReps && isWorkoutActive) {
+                        stopWorkout()
+                        Toast.makeText(context, "Target reps reached! Great job!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error syncing rep count: ${e.message}")
+        }
+    }
+    
+    /**
+     * Start periodic syncing of rep count
+     */
+    private fun startRepCountSync() {
+        syncHandler = Handler(Looper.getMainLooper())
+        syncHandler?.postDelayed(syncRunnable, 500)
+    }
+    
+    /**
+     * Stop periodic syncing of rep count
+     */
+    private fun stopRepCountSync() {
+        syncHandler?.removeCallbacks(syncRunnable)
+        syncHandler = null
+    }
     
     /**
      * Record a completed rep with its form quality
-     * Only counts if workout is active and sufficient time has passed since last rep
+     * This method is completely disabled to prevent duplicate counting
      */
     fun recordRep(angle: Float, hasErrors: Boolean): Boolean {
-        if (!isWorkoutActive) {
-            return false // Workout not started, don't count rep
-        }
-        
-        // Check if we should ignore reps temporarily
-        val currentTime = System.currentTimeMillis()
-        if (ignoreRepsTemporarily && currentTime < ignoreRepsUntil) {
-            return false // Temporarily ignoring reps
-        } else {
-            ignoreRepsTemporarily = false // Reset flag once duration expires
-        }
-        
-        // Check if sufficient time has passed since the last rep
-        if (currentTime - lastRepTime < minTimeBetweenReps) {
-            // Too soon after last rep, likely a false count
-            return false 
-        }
-        
-        // Update last rep time
-        lastRepTime = currentTime
-        
-        try {
-            // Record rep in ViewModel
-            val errors = if (hasErrors) listOf("form_error") else emptyList()
-            viewModel.recordRep(angle, errors)
-            
-            // Update any currently open dialog
-            updateStatsDisplay()
-            
-            // Check if target reached
-            if (targetReps > 0 && (viewModel.totalReps.value ?: 0) >= targetReps) {
-                stopWorkout()
-                Toast.makeText(context, "Target reps reached! Great job!", Toast.LENGTH_SHORT).show()
-            }
-            
-            return true
-        } catch (e: Exception) {
-            Log.e("WorkoutStatsManager", "Error recording rep: ${e.message}")
-            return false
-        }
+        // Do absolutely nothing - all rep counting now happens via direct sync
+        return false
     }
     
     /**
@@ -110,12 +134,22 @@ class WorkoutStatsManager(
         if (isWorkoutActive) return
         
         isWorkoutActive = true
+        workoutStartTime = System.currentTimeMillis()
         viewModel.resetWorkoutStats()
-        lastRepTime = System.currentTimeMillis() // Update this to current time
         
-        // Temporarily ignore reps when starting workout to prevent auto counting
-        ignoreRepsTemporarily = true
-        ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
+        // Get access to the ExerciseFeedbackManager from the MainActivity
+        try {
+            val mainActivity = context as? MainActivity
+            if (mainActivity != null) {
+                val cameraFragment = mainActivity.getCameraFragment()
+                cameraFragment?.getExerciseFeedbackManager()?.resetCounters()
+            }
+        } catch (e: Exception) {
+            Log.e("WorkoutStatsManager", "Error resetting feedback manager: ${e.message}")
+        }
+        
+        // Start syncing rep count from ExerciseFeedbackManager
+        startRepCountSync()
         
         // Update UI if dialog is showing
         statsDialog?.findViewById<TextView>(R.id.workout_status)?.text = "Workout in progress"
@@ -132,9 +166,8 @@ class WorkoutStatsManager(
         
         isWorkoutActive = false
         
-        // Temporarily ignore reps when stopping workout
-        ignoreRepsTemporarily = true
-        ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
+        // Stop syncing rep count
+        stopRepCountSync()
         
         // Update UI if dialog is showing
         statsDialog?.findViewById<TextView>(R.id.workout_status)?.text = "Workout completed"
@@ -191,13 +224,9 @@ class WorkoutStatsManager(
     fun showWorkoutStats() {
         if (statsDialog?.isShowing == true) {
             // Dialog already showing, just update it
-            updateStatsDisplay()
+            updateFromExerciseFeedbackManager()
             return
         }
-        
-        // Temporarily ignore reps when dialog opens to prevent auto counting
-        ignoreRepsTemporarily = true
-        ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
         
         try {
             // Create new dialog
@@ -216,14 +245,25 @@ class WorkoutStatsManager(
                 // Clean up any observers when dialog is dismissed
                 collectingJob?.cancel()
                 collectingJob = null
-                
-                // Temporarily ignore reps when dialog closes to prevent auto counting
-                ignoreRepsTemporarily = true
-                ignoreRepsUntil = System.currentTimeMillis() + ignoreRepsDuration
             }
             
             statsDialog = dialog
             dialog.show()
+            
+            // If workout is active, immediately start syncing
+            if (isWorkoutActive) {
+                updateFromExerciseFeedbackManager()
+            }
+
+            dialog.setOnDismissListener {
+                // Stop any UI update handlers when dialog is dismissed
+                uiUpdateHandler?.removeCallbacksAndMessages(null)
+                uiUpdateHandler = null
+                
+                // Clean up any observers when dialog is dismissed
+                collectingJob?.cancel()
+                collectingJob = null
+            }
         } catch (e: Exception) {
             Log.e("WorkoutStatsManager", "Error showing workout stats dialog: ${e.message}")
             Toast.makeText(context, "Failed to show workout statistics", Toast.LENGTH_SHORT).show()
@@ -255,7 +295,64 @@ class WorkoutStatsManager(
             
             // Set initial values
             exerciseTypeText.text = getExerciseTypeName(viewModel.currentExerciseType)
-            totalRepsText.text = viewModel.totalReps.value?.toString() ?: "0"
+            
+            // Try to get the EXACT rep count TextView from the camera overlay
+            try {
+                val mainActivity = context as? MainActivity
+                val cameraFragment = mainActivity?.getCameraFragment()
+                
+                if (cameraFragment != null) {
+                    // Get the actual rep count TextView from the camera overlay
+                    val actualRepCountTextView = cameraFragment.getRepCountTextView()
+                    
+                    if (actualRepCountTextView != null) {
+                        // Initial value
+                        totalRepsText.text = actualRepCountTextView.text
+                        
+                        // Setup a handler to continuously update this text view
+                        val handler = Handler(Looper.getMainLooper())
+                        val updateRunnable = object : Runnable {
+                            override fun run() {
+                                if (statsDialog?.isShowing == true) {
+                                    // Directly copy the text from the camera overlay
+                                    totalRepsText.text = actualRepCountTextView.text
+                                    
+                                    // Also update progress bar if target is set
+                                    if (targetReps > 0) {
+                                        val repCount = actualRepCountTextView.text.toString().toIntOrNull() ?: 0
+                                        val progress = (repCount * 100) / targetReps
+                                        val progressBar = statsDialog?.findViewById<ProgressBar>(R.id.rep_progress)
+                                        progressBar?.progress = progress.coerceAtMost(100)
+                                        
+                                        // Check if target reached
+                                        if (repCount >= targetReps && isWorkoutActive) {
+                                            stopWorkout()
+                                            Toast.makeText(context, "Target reps reached! Great job!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    
+                                    // Continue updating
+                                    handler.postDelayed(this, 100) // Update every 100ms
+                                }
+                            }
+                        }
+                        
+                        // Start the continuous update
+                        handler.post(updateRunnable)
+                    } else {
+                        // Fallback to viewModel if we couldn't get the actual TextView
+                        totalRepsText.text = viewModel.totalReps.value?.toString() ?: "0"
+                    }
+                } else {
+                    // Fallback to viewModel if we couldn't get the CameraFragment
+                    totalRepsText.text = viewModel.totalReps.value?.toString() ?: "0"
+                }
+            } catch (e: Exception) {
+                Log.e("WorkoutStatsManager", "Error setting up real-time rep count: ${e.message}")
+                // Fallback to viewModel
+                totalRepsText.text = viewModel.totalReps.value?.toString() ?: "0"
+            }
+            
             perfectRepsText.text = viewModel.perfectReps.value?.toString() ?: "0"
             avgAngleText.text = viewModel.avgAngle.value?.let { String.format("%.1f°", it) } ?: "0°"
             difficultyText.text = viewModel.difficulty.value?.toString() ?: "1"
@@ -266,11 +363,6 @@ class WorkoutStatsManager(
             stopButton.isEnabled = isWorkoutActive
             
             // Setup observers for live data
-            viewModel.totalReps.observe(lifecycleOwner) { reps ->
-                totalRepsText.text = reps.toString()
-                updateProgressBar()
-            }
-            
             viewModel.perfectReps.observe(lifecycleOwner) { reps ->
                 perfectRepsText.text = reps.toString()
             }
@@ -333,15 +425,7 @@ class WorkoutStatsManager(
      * Update the stats display if dialog is showing
      */
     private fun updateStatsDisplay() {
-        val dialog = statsDialog ?: return
-        if (!dialog.isShowing) return
-        
-        try {
-            // Update progress bar
-            updateProgressBar()
-        } catch (e: Exception) {
-            Log.e("WorkoutStatsManager", "Error updating stats display: ${e.message}")
-        }
+        updateFromExerciseFeedbackManager()
     }
     
     /**
@@ -390,6 +474,10 @@ class WorkoutStatsManager(
      * Clean up resources
      */
     fun cleanup() {
+        uiUpdateHandler?.removeCallbacksAndMessages(null)
+        uiUpdateHandler = null
+        
+        stopRepCountSync()
         statsDialog?.dismiss()
         statsDialog = null
         collectingJob?.cancel()
